@@ -14,6 +14,11 @@ export const BOWL_GEOM: Record<string, { r: number; depth: number }> = {
   'mixing-bowl': { r: 0.1, depth: 0.1 },
   colander: { r: 0.1, depth: 0.09 },
   plate: { r: 0.11, depth: 0.02 },
+  'measuring-cup': { r: 0.04, depth: 0.06 },
+  'measuring-spoon': { r: 0.022, depth: 0.012 },
+  'cake-pan': { r: 0.112, depth: 0.05 },
+  'loaf-pan': { r: 0.06, depth: 0.07 },
+  'sheet-pan': { r: 0.13, depth: 0.022 },
 };
 
 const SHAKERS: Record<string, { kind: string; color: number }> = {

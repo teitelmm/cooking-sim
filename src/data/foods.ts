@@ -95,6 +95,9 @@ export const FOODS: Record<string, FoodProps> = {
   garlic: { kind: 'aromatic', k: 0.5, rho: 1050, cp: 3300, water: 0.59, sugar: 1, softens: true, browning: 2.2, char: 3, shape: 'ellipsoid' },
   herbs: { kind: 'veg', k: 0.4, rho: 400, cp: 3800, water: 0.85, char: 2, shape: 'box' },
   egg: { kind: 'egg', k: 0.5, rho: 1030, cp: 3300, water: 0.75, protein: true, shape: 'ellipsoid' },
+  /** Generic dough/batter (actual props come from the mixture — see sim/baking doughProps). */
+  dough: { kind: 'dough', k: 0.42, rho: 1150, cp: 2800, water: 0.4, starch: 1, sugar: 0.05, browning: 1.1, shape: 'ellipsoid' },
+  batter: { kind: 'dough', k: 0.42, rho: 1100, cp: 3000, water: 0.45, starch: 1, sugar: 0.6, browning: 1.6, shape: 'box' },
   butter: { kind: 'fat', k: 0.2, rho: 910, cp: 2400, water: 0.16, browning: 2, char: 2, shape: 'box' },
 };
 

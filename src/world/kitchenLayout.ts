@@ -322,6 +322,20 @@ counter(1.4, 2.8);
   box(cx + 0.15, cx + 0.17, y0 + 0.02, y0 + 0.36, -0.3, 0.06, 'plastic', { color: c });
   box(cx - 0.15, cx + 0.15, y0 + 0.02, y0 + 0.36, -0.3, -0.28, 'plastic', { color: c });
   box(cx - 0.17, cx + 0.17, y0 + 0.2, y0 + 0.36, -0.28, 0.06, 'plastic', { color: c, surface: 'all', tag: 'airfryer-top' });
+  // Baking shelves above the air fryer: ingredients up top, tools and pans below.
+  box(5.22, 5.78, 1.5, 1.515, WALL_Z, WALL_Z + 0.3, 'wood', { surface: 'all', tag: 'baking-shelf', color: 0x9a6b43 });
+  box(5.22, 5.78, 1.76, 1.775, WALL_Z, WALL_Z + 0.3, 'wood', { surface: 'all', tag: 'baking-shelf', color: 0x9a6b43 });
+  spawners.push({ itemId: 'baking-powder', pos: [5.28, 1.775, -0.22], label: 'Baking powder' });
+  spawners.push({ itemId: 'baking-soda', pos: [5.38, 1.775, -0.22], label: 'Baking soda' });
+  spawners.push({ itemId: 'yeast-jar', pos: [5.47, 1.775, -0.22], label: 'Yeast' });
+  spawners.push({ itemId: 'vanilla', pos: [5.55, 1.775, -0.22], label: 'Vanilla' });
+  spawners.push({ itemId: 'chocolate-chips', pos: [5.67, 1.775, -0.22], label: 'Chocolate chips' });
+  spawners.push({ itemId: 'loaf-pan', pos: [5.36, 1.515, -0.22], label: 'Loaf pan' });
+  spawners.push({ itemId: 'cake-pan', pos: [5.62, 1.515, -0.2], label: 'Cake pan' });
+  spawners.push({ itemId: 'measuring-cup', pos: [5.27, 1.515, -0.1], label: 'Measuring cup' });
+  spawners.push({ itemId: 'measuring-spoon', pos: [5.42, 1.515, -0.1], label: 'Tablespoon' });
+  spawners.push({ itemId: 'whisk', pos: [5.62, 1.515, -0.08], label: 'Whisk' });
+  spawners.push({ itemId: 'rolling-pin', pos: [5.5, COUNTER_TOP, 0.2], label: 'Rolling pin' });
   zones.push({ id: 'air-fryer', kind: 'airFryer', pos: [cx, y0 + 0.1, -0.11], size: [0.3, 0.16, 0.34] });
   spawners.push({ itemId: 'air-fryer-basket', pos: [cx, y0 + 0.022, -0.1], label: 'Air-fryer basket' });
 }
@@ -334,7 +348,7 @@ counter(1.4, 2.8);
   box(6.32, 6.38, COUNTER_TOP + 0.04, COUNTER_TOP + 0.36, -0.16, -0.1, 'plastic', { color: 0x1a1a1a, visualOnly: true, tag: 'circulator' });
   zones.push({ id: 'sous-vide', kind: 'sousVide', pos: [6.2, COUNTER_TOP + 0.11, 0.0], size: [0.44, 0.2, 0.32] });
   spawners.push({ itemId: 'vacuum-bag', pos: [5.92, COUNTER_TOP, 0.18], label: 'Vacuum bag' });
-  spawners.push({ itemId: 'foil-sheet', pos: [5.62, COUNTER_TOP, 0.2], label: 'Foil' });
+  spawners.push({ itemId: 'foil-sheet', pos: [6.42, COUNTER_TOP, 0.21], label: 'Foil' });
 }
 
 // ---------------------------------------------------------------- 8. sink (6.6 – 7.4)

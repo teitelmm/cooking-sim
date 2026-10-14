@@ -667,3 +667,118 @@ scenarios.frying = async ({ page, shot, game, wait, assert }) => {
   });
   assert(out === false, 'a lid smothers the fire');
 };
+
+scenarios.bread = async ({ page, shot, game, wait, assert }) => {
+  const r = await game(() => {
+    const g = window.__game;
+    const V = (x, y, z) => g.toScreen && { x, y, z, clone() { return V(this.x, this.y, this.z); }, add(o) { this.x += o.x; this.y += o.y; this.z += o.z; return this; }, multiplyScalar(s) { this.x *= s; this.y *= s; this.z *= s; return this; } };
+    const frames = (n) => {
+      for (let i = 0; i < n; i++) {
+        for (let k = 0; k < 4; k++) g.physics.step();
+        g.liquids.frame(1 / 30, []);
+        g.pantry.frame(1 / 30);
+        g.baking.frame(1 / 30);
+      }
+      g.physics.sync();
+    };
+    for (const [h, it] of [...g.items]) if (['steak', 'potato', 'chef-knife', 'cutting-board'].includes(it.def.id)) g.despawn(h);
+    const bowl = g.spawn('mixing-bowl', { x: 2.1, y: 0.91, z: 0.08 });
+    const bh = bowl.entry.body.handle;
+    frames(30);
+    // Tip the flour bag over the bowl until ~500 g is in.
+    const flour = g.spawn('flour-bag', { x: 2.1, y: 1.2, z: 0.08 });
+    flour.entry.body.setGravityScale(0, true);
+    flour.entry.body.setRotation({ x: 0.924, y: 0, z: 0, w: 0.383 }, true); // tipped 135°
+    let n = 0;
+    while ((g.baking.mixtureOf(bh)?.kg.flour ?? 0) < 0.5 && n < 900) {
+      flour.entry.body.setTranslation({ x: 2.1, y: 1.12, z: 0.04 }, true);
+      flour.entry.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      frames(1);
+      n++;
+    }
+    g.despawn(flour.entry.body.handle);
+    // Yeast from the jar, a little salt, then 350 g water.
+    const yeast = g.spawn('yeast-jar', { x: 2.1, y: 1.1, z: 0.08 });
+    yeast.entry.body.setGravityScale(0, true);
+    yeast.entry.body.setRotation({ x: 1, y: 0, z: 0, w: 0 }, true);
+    n = 0;
+    while ((g.baking.mixtureOf(bh)?.kg.yeast ?? 0) < 0.007 && n < 600) {
+      yeast.entry.body.setTranslation({ x: 2.1, y: 1.08, z: 0.08 }, true);
+      yeast.entry.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      frames(1);
+      n++;
+    }
+    g.despawn(yeast.entry.body.handle);
+    g.baking.emit(V(2.1, 1.05, 0.08), V(0, 0, 0), 'salt', 0.01, -1);
+    for (let i = 0; i < 35; i++) g.liquids.emit(V(2.1, 1.05, 0.08), V(0, -0.2, 0), 'water', 0.01, 18, -1);
+    frames(60);
+    // Whisk: move the whisk around inside the bowl.
+    const whisk = g.spawn('whisk', { x: 2.1, y: 1.0, z: 0.08 });
+    g.grab.heldHandle = whisk.entry.body.handle;
+    whisk.entry.body.setGravityScale(0, true);
+    for (let i = 0; i < 240; i++) {
+      const a = i * 0.5;
+      whisk.entry.body.setTranslation({ x: 2.1 - 0.08 + Math.cos(a) * 0.05, y: 0.94, z: 0.08 + Math.sin(a) * 0.05 }, true);
+      g.baking.frame(1 / 30);
+    }
+    g.grab.heldHandle = null;
+    g.despawn(whisk.entry.body.handle);
+    const m = g.baking.mixtureOf(bh);
+    const a = m.analyze();
+    // Tip the bowl to turn it out onto a sheet pan.
+    const sheet = g.spawn('sheet-pan', { x: 2.45, y: 0.91, z: 0.05 });
+    frames(30);
+    const bb = bowl.entry.body;
+    bb.setGravityScale(0, true);
+    bb.setTranslation({ x: 2.45, y: 1.1, z: 0.05 }, true);
+    bb.setRotation({ x: 0.924, y: 0, z: 0, w: 0.383 }, true);
+    frames(10);
+    g.despawn(bh);
+    frames(90);
+    const doughH = [...g.baking.doughs.keys()][0];
+    if (doughH === undefined) return { fail: 'no dough', kg: m.kg, a, mix: m.mixQuality, strokes: m.strokes };
+    const before = g.sim.foods.get(doughH)?.size.slice();
+    // Proof 100 min at room temp.
+    for (let i = 0; i < 20; i++) {
+      g.fastForward(300);
+      g.baking.frame(1 / 30);
+      frames(10);
+    }
+    const dh = [...g.baking.doughs.keys()][0];
+    const rise = g.baking.doughs.get(dh).rise;
+    // Bake: oven to 425, sheet pan with the dough onto the rack.
+    const o = g.appliances.oven;
+    o.setF(425);
+    o.setMode('bake');
+    g.fastForward(16 * 60);
+    const sb = sheet.entry.body;
+    const dp = g.bodyPos(dh);
+    const off = { x: dp.x - g.bodyPos(sheet.entry.body.handle).x, z: dp.z - g.bodyPos(sheet.entry.body.handle).z };
+    sb.setTranslation({ x: 3.2, y: 0.53, z: -0.02 }, true);
+    g.physics.entries.get(dh).body.setTranslation({ x: 3.2 + off.x, y: 0.6, z: -0.02 + off.z }, true);
+    frames(60);
+    for (let i = 0; i < 90; i++) {
+      g.fastForward(30);
+      g.baking.frame(1 / 30);
+    }
+    const final = [...g.baking.doughs.keys()][0];
+    const food = g.sim.foods.get(final);
+    const d = g.baking.doughs.get(final);
+    const F = (c) => (c * 9) / 5 + 32;
+    const report = { corePeakF: F(food.thermal.corePeak()), crust: food.thermal.browning(), char: food.thermal.char(), set: d.set };
+    // Pull it out and cut it open to show the crumb.
+    g.physics.entries.get(final).body.setTranslation({ x: 2.2, y: 1.0, z: 0.05 }, true);
+    sb.setTranslation({ x: 2.2, y: 0.91, z: 0.05 }, true);
+    frames(60);
+    const pieces = g.cutFood(final, { n: [0, 0, 1], d: 0 }, 0.04);
+    return { type: a.type, hydration: a.hydration, mix: m.mixQuality, before, rise, report, pieces: pieces.length };
+  });
+  console.log('     ' + JSON.stringify(r));
+  assert(r.type === 'bread dough', `mixed a bread dough (${r.type})`);
+  assert(r.rise > 1.45, `dough proofed (rise ${r.rise.toFixed(2)})`);
+  assert(r.report.corePeakF > 195 && r.report.crust > 0.7 && r.report.set, 'loaf baked through with a brown crust');
+  await game(() => window.__game.rig.focusOn({ x: 2.2, y: 1.32 }));
+  await settle(page);
+  await wait(1500);
+  await shot('bread');
+};

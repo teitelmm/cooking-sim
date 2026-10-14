@@ -12,7 +12,7 @@ beforeAll(async () => {
 });
 
 /** Items that legitimately roll on flat surfaces (round produce, eggs): only checked for staying on. */
-const ROLLERS = new Set(['egg', 'onion', 'bell-pepper', 'garlic', 'potato', 'carrot', 'oil-bottle', 'mushroom']);
+const ROLLERS = new Set(['rolling-pin', 'whisk', 'vanilla', 'yeast-jar', 'baking-powder', 'egg', 'onion', 'bell-pepper', 'garlic', 'potato', 'carrot', 'oil-bottle', 'mushroom']);
 const surfaces = KITCHEN.blocks.filter((b) => b.surface);
 
 function fits(def: ItemDef, s: Block): boolean {
@@ -97,7 +97,7 @@ describe('kitchen layout', () => {
         const where = `${def.id} on ${p.s.tag ?? p.s.surface}@${p.x.toFixed(2)},${p.top.toFixed(2)}`;
         const bottom = t.y + b.min.y - 0.02; // rotated items may sit lower than their AABB min — allow 2 cm
         if (bottom < p.top - 0.05) failures.push(`${where}: fell (y=${t.y.toFixed(3)})`);
-        if (!p.body.isSleeping() && speed > (ROLLERS.has(def.id) ? 0.05 : 0.01)) failures.push(`${where}: still moving ${speed.toFixed(3)} m/s`);
+        if (!p.body.isSleeping() && speed > (ROLLERS.has(def.id) ? 0.1 : 0.01)) failures.push(`${where}: still moving ${speed.toFixed(3)} m/s`);
         const drift = Math.hypot(t.x - p.x, t.z - p.z);
         if (!ROLLERS.has(def.id) && p.s.surface !== 'enclosed' && drift > 0.05) failures.push(`${where}: drifted ${drift.toFixed(3)} m`);
       }

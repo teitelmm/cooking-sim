@@ -30,6 +30,7 @@ import { ProbeSystem } from './world/probe';
 import { KnifeSystem } from './world/knife';
 import { AutoCutter } from './world/autoCutter';
 import { PantryActions } from './world/pantryActions';
+import { BakingSystem } from './world/baking';
 import { partVolume } from './world/shapes';
 import { inZone, zone } from './world/kitchenAppliances';
 import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
@@ -68,6 +69,7 @@ export class Game {
   readonly knife: KnifeSystem;
   readonly autoCutter: AutoCutter;
   readonly pantry: PantryActions;
+  readonly baking: BakingSystem;
   private bagTimers = new Map<number, number>();
   private lastGameTime = 0;
   ready = false;
@@ -125,6 +127,7 @@ export class Game {
     this.knife = new KnifeSystem(this);
     this.autoCutter = new AutoCutter(this);
     this.pantry = new PantryActions(this);
+    this.baking = new BakingSystem(this);
     this.liquids.onSplash = (at, kg, kind) => at.y > 0.5 && this.juice.puddle(at, kg, kind === 'oil' ? [0.85, 0.65, 0.2] : [0.7, 0.8, 0.88], kind === 'oil' ? 920 : 1000);
     this.heat.steamAt = (p) => {
       for (const k of this.liquids.all) {
@@ -369,6 +372,7 @@ export class Game {
     this.fryerBubbles(dt);
     this.autoCutter.frame();
     this.pantry.frame(dt);
+    this.baking.frame(dt);
     this.renderer.render(this.scene, this.camera);
     const held = this.grab.heldHandle !== null ? this.items.get(this.grab.heldHandle) : undefined;
     this.overlay.update(realDt, {

@@ -297,7 +297,7 @@ export class LiquidSystem {
         if (!t) continue;
         if (this.upOf(c.handle).y < 0.8) continue;
         const surfaceY = t.y + Math.min(c.c.level, c.pan.spec.depth!);
-        if (Math.hypot(d.p.x - t.x, d.p.z - t.z) < c.pan.spec.innerRadius! && d.p.y <= surfaceY + 0.012 && d.p.y > t.y - 0.02) {
+        if (Math.hypot(d.p.x - t.x, d.p.z - t.z) < c.pan.spec.innerRadius! && d.p.y <= surfaceY + 0.012 && d.p.y > t.y - 0.08) {
           c.c.add(d.kind, d.kg, d.T);
           landed = true;
           break;

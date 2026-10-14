@@ -772,6 +772,11 @@ export class FoodThermal {
     return this.faceStat(this.crust, dir);
   }
 
+  /** Number of exposed faces of cell c (0 = interior). */
+  surfaceFaceCount(c: number): number {
+    return this.surfaceFaces[c];
+  }
+
   /** Face index for (cell, dir), or −1. */
   faceOf(c: number, dir: number): number {
     if (!this.faceIndex) {
