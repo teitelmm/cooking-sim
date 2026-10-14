@@ -102,8 +102,6 @@ export class GrabController {
     this.saturated = mag > GRAB.GRIP_MAX;
     if (mag > cap) force.multiplyScalar(cap / mag);
     this.lastForce = Math.min(mag, cap);
-    b.resetForces(false);
-    b.resetTorques(false);
     b.addForceAtPoint(force, anchor, true);
 
     // Feed queued rotation input into the wrist target at a bounded rate.

@@ -22,6 +22,11 @@ import { juiceReleased, splitFood } from './sim/split';
 import type { Plane } from './sim/food';
 import { clipConvex, geometryPoints } from './world/convex';
 import { RAPIER } from './engine/physics';
+import { KitchenAppliances } from './world/kitchenAppliances';
+import { HeatBridge } from './world/heatBridge';
+import { WaterSystem } from './world/water';
+import { partVolume } from './world/shapes';
+import { zone } from './world/kitchenAppliances';
 import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
 import { KITCHEN } from './world/kitchenLayout';
 import { buildKitchenColliders, buildKitchenVisuals, KitchenLights } from './world/kitchenBuilder';
@@ -50,6 +55,10 @@ export class Game {
   readonly items = new Map<number, SpawnedItem>();
   readonly foodViews = new Map<number, FoodView>();
   readonly juice: JuiceSystem;
+  readonly appliances: KitchenAppliances;
+  readonly heat: HeatBridge;
+  readonly water: WaterSystem;
+  private bagTimers = new Map<number, number>();
   private lastGameTime = 0;
   ready = false;
   private last = performance.now();
@@ -68,7 +77,24 @@ export class Game {
     bindResize(container, this.renderer, this.camera);
     this.input = new PointerRouter(this.renderer.domElement, this.camera, this.rig);
     this.grab = new GrabInteraction(this.physics, this.events, { minZ: KITCHEN.holdDepth[0], maxZ: KITCHEN.holdDepth[1], minY: 0.02 });
+    this.appliances = new KitchenAppliances(this.physics, this.scene);
+    this.input.addPicker(this.appliances.controls.picker);
     this.input.addPicker(this.grab.picker);
+    this.heat = new HeatBridge(this.physics, this.appliances, this.sim.foods);
+    this.sim.systems.push(this.heat);
+    this.water = new WaterSystem(this.physics);
+    const sv = zone('sous-vide');
+    this.appliances.sousVideVolume = this.water.add({
+      id: 'sous-vide',
+      cx: sv.pos[0],
+      cz: sv.pos[2],
+      hx: sv.size[0] / 2,
+      hz: sv.size[2] / 2,
+      floorY: KITCHEN.counterTop + 0.008,
+      baseLevel: () => this.appliances.sousVideLevel,
+      density: 1000,
+    });
+    this.renderer.domElement.addEventListener('dblclick', (e) => this.onDoubleClick(e));
     this.audio = new Audio(this.events);
     this.juice = new JuiceSystem(this.scene, (x, y, z) => this.floorAt(x, y, z));
     this.buildScene();
@@ -90,6 +116,11 @@ export class Game {
   ): SpawnedItem {
     const item = spawnItem(this.physics, this.scene, def, pos, rot);
     const h = item.entry.body.handle;
+    {
+      const b = partsBounds(def.parts);
+      item.entry.data.volume = def.parts.reduce((v, p) => v + partVolume(p), 0);
+      item.entry.data.halfHeight = (b.max.y - b.min.y) / 2;
+    }
     this.items.set(h, item);
     this.grab.pickables.push(item.view);
     this.spawnOrder.push(h);
@@ -110,6 +141,7 @@ export class Game {
       item.entry.data.foodCenter = center;
       this.foodViews.set(h, new FoodView(food, item.view, center, def.color ?? 0xaa5555, piece?.hull));
     }
+    this.heat.registerCookware(h, def.id);
     this.events.emit('spawn', { body: h, itemId: def.id });
     this.enforceItemCap();
     return item;
@@ -223,6 +255,7 @@ export class Game {
     this.sim.removeFood(handle);
     this.foodViews.get(handle)?.dispose();
     this.foodViews.delete(handle);
+    this.heat.unregister(handle);
     this.items.delete(handle);
     const i = this.grab.pickables.indexOf(it.view);
     if (i >= 0) this.grab.pickables.splice(i, 1);
@@ -265,6 +298,8 @@ export class Game {
     this.lastGameTime = this.sim.gameTime;
     for (const v of this.foodViews.values()) v.update(gdt);
     this.juice.update(dt);
+    this.appliances.frame(dt);
+    this.updateBagging(dt);
     this.renderer.render(this.scene, this.camera);
     const held = this.grab.heldHandle !== null ? this.items.get(this.grab.heldHandle) : undefined;
     this.overlay.update(realDt, {
@@ -290,6 +325,84 @@ export class Game {
       return { x: r.left + (v.x * 0.5 + 0.5) * r.width, y: r.top + (-v.y * 0.5 + 0.5) * r.height, handle: it.entry.body.handle };
     }
     return null;
+  }
+
+  /** Seal a food in a vacuum bag (sous vide): it cooks in its own juices, can't brown, sinks in the bath. */
+  bag(foodHandle: number, bagHandle?: number): void {
+    const it = this.items.get(foodHandle);
+    const food = it?.entry.data.food as FoodItem | undefined;
+    if (!it || !food || it.entry.data.bagged) return;
+    if (bagHandle !== undefined) this.despawn(bagHandle);
+    const c = it.entry.data.foodCenter as [number, number, number];
+    const wrap = new THREE.Mesh(
+      new THREE.BoxGeometry(food.size[0] * 1.08 + 0.01, food.size[1] * 1.15 + 0.004, food.size[2] * 1.08 + 0.01),
+      new THREE.MeshStandardMaterial({ color: 0xe6eef2, transparent: true, opacity: 0.3, roughness: 0.12, depthWrite: false }),
+    );
+    wrap.position.set(...c);
+    wrap.name = 'vacuum-wrap';
+    it.view.add(wrap);
+    it.entry.data.bagged = true;
+  }
+
+  unbag(foodHandle: number): void {
+    const it = this.items.get(foodHandle);
+    if (!it?.entry.data.bagged) return;
+    const w = it.view.getObjectByName('vacuum-wrap');
+    if (w) it.view.remove(w);
+    it.entry.data.bagged = false;
+    const p = it.entry.body.translation();
+    this.spawn('vacuum-bag', { x: p.x + 0.18, y: p.y + 0.05, z: p.z });
+  }
+
+  /** Food resting on an empty vacuum bag for half a second gets sealed into it. */
+  private updateBagging(dt: number): void {
+    const bags = [...this.items.values()].filter((i) => i.def.id === 'vacuum-bag');
+    for (const bag of bags) {
+      const bp = bag.entry.body.translation();
+      let found: number | undefined;
+      for (const [h] of this.sim.foods) {
+        const e = this.physics.entries.get(h);
+        if (!e || e.data.bagged || this.grab.heldHandle === h) continue;
+        const p = e.body.translation();
+        if (Math.abs(p.x - bp.x) < 0.11 && Math.abs(p.z - bp.z) < 0.08 && p.y > bp.y && p.y - bp.y < 0.08) found = h;
+      }
+      const k = bag.entry.body.handle;
+      if (found === undefined) {
+        this.bagTimers.delete(k);
+        continue;
+      }
+      const t = (this.bagTimers.get(k) ?? 0) + dt;
+      this.bagTimers.set(k, t);
+      if (t > 0.5) {
+        this.bagTimers.delete(k);
+        this.bag(found, k);
+      }
+    }
+  }
+
+  private onDoubleClick(e: MouseEvent): void {
+    const p = this.input.info(e.clientX, e.clientY);
+    const ray = new THREE.Raycaster();
+    ray.ray.copy(p.ray);
+    const hit = ray.intersectObjects(this.grab.pickables, true)[0];
+    if (!hit) return;
+    let o: THREE.Object3D | null = hit.object;
+    while (o && o.userData.bodyHandle === undefined) o = o.parent;
+    if (o) this.unbag(o.userData.bodyHandle as number);
+  }
+
+  /** Run the cooking sim (appliances, cookware, food) forward by game seconds without rendering. */
+  fastForward(seconds: number, dt = 0.5): void {
+    for (let t = 0; t < seconds; t += dt) this.sim.step(dt);
+    this.lastGameTime = this.sim.gameTime - 1; // force view refresh next frame
+    for (const v of this.foodViews.values()) v.update(10);
+  }
+
+  /** Screen position (CSS px) of a world point. */
+  toScreen(x: number, y: number, z: number): { x: number; y: number } {
+    const v = new THREE.Vector3(x, y, z).project(this.camera);
+    const r = this.renderer.domElement.getBoundingClientRect();
+    return { x: r.left + (v.x * 0.5 + 0.5) * r.width, y: r.top + (-v.y * 0.5 + 0.5) * r.height };
   }
 
   bodyPos(handle: number): { x: number; y: number; z: number } {

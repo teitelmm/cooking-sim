@@ -85,6 +85,13 @@ export class PhysicsWorld {
   }
 
   step(): void {
+    // User forces persist in Rapier until reset: clear them so each hook adds this step's forces only.
+    for (const e of this.entries.values()) {
+      if (e.body.isDynamic() && !e.body.isSleeping()) {
+        e.body.resetForces(false);
+        e.body.resetTorques(false);
+      }
+    }
     for (const f of this.preStep) f(PHYSICS_DT);
     this.world.step(this.queue);
     if (!this.events) return;

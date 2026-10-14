@@ -148,3 +148,123 @@ scenarios.probe = async ({ game }) => {
   const out = await game((src) => new Function(src)(), body);
   console.log('     probe: ' + JSON.stringify(out));
 };
+
+const settle = (page) => page.waitForFunction(() => !window.__game.rig.moving, null, { timeout: 30_000 });
+
+scenarios.appliances = async ({ page, shot, game, wait, assert }) => {
+  // --- Range: drag the front-left burner knob (under the cast-iron pan) to high.
+  await game(() => window.__game.rig.focusOn({ x: 3.2, y: 1.38 }));
+  await settle(page);
+  const pan = await game(() => {
+    const g = window.__game;
+    const [h] = [...g.heat.cookware].find(([, c]) => c.id === 'cast-iron-pan');
+    return { h, T: g.heat.cookware.get(h).T };
+  });
+  const knob = await game(() => window.__game.toScreen(2.92, 0.81, 0.337));
+  await mouseDrag(page, knob.x, knob.y, knob.x + 160, knob.y - 160, 15);
+  const knobVal = await game(() => window.__game.appliances.burners[2].knob);
+  assert(knobVal > 0.9, `burner knob turned up by dragging (${knobVal.toFixed(2)})`);
+  await game(() => window.__game.fastForward(240));
+  const panT = await game((h) => window.__game.heat.cookware.get(h).T, pan.h);
+  const F = (c) => (c * 9) / 5 + 32;
+  console.log(`     cast iron: ${F(pan.T).toFixed(0)}°F → ${F(panT).toFixed(0)}°F after 4 min on high`);
+  assert(F(panT) > F(pan.T) + 200, 'pan heats on the burner');
+  // --- Oven: MODE (→ bake), then wait for preheat.
+  const mode = await game(() => window.__game.toScreen(3.36, 0.985, -0.262));
+  await page.mouse.click(mode.x, mode.y);
+  const ovenMode = await game(() => window.__game.appliances.oven.mode);
+  assert(ovenMode === 'bake', `MODE button switches the oven to bake (${ovenMode})`);
+  await game(() => window.__game.fastForward(14 * 60));
+  const oven = await game(() => ({ pre: window.__game.appliances.oven.preheated, T: window.__game.appliances.oven.airT }));
+  console.log(`     oven after 14 min: ${F(oven.T).toFixed(0)}°F preheated=${oven.pre}`);
+  assert(oven.pre, 'oven preheats within ~14 min');
+  await wait(1500);
+  await shot('range-hot');
+
+  // --- Grill: steak on the hot left zone, then flip it to show grill marks.
+  await game(() => {
+    const g = window.__game;
+    g.appliances.grill.knobs[0] = 1;
+    g.fastForward(600);
+    const s = g.spawn('steak', { x: 3.76, y: 0.95, z: 0.0 });
+    g.physics.step();
+    for (let i = 0; i < 120; i++) g.physics.step();
+    window.__grillSteak = s.entry.body.handle;
+    g.fastForward(150, 0.5);
+  });
+  const marks = await game(() => {
+    const g = window.__game;
+    const f = g.sim.foods.get(window.__grillSteak).thermal;
+    const b = [];
+    for (let i = 0; i < f.faceCount; i++) if (f.faceDir[i] === 3) b.push(f.brown[i] + f.charred[i] * 2);
+    const mean = b.reduce((x, y) => x + y, 0) / b.length;
+    const varc = b.reduce((x, y) => x + (y - mean) ** 2, 0) / b.length;
+    return { mean, sd: Math.sqrt(varc), max: Math.max(...b), min: Math.min(...b) };
+  });
+  console.log(`     grill marks: browning+char mean ${marks.mean.toFixed(2)} min ${marks.min.toFixed(2)} max ${marks.max.toFixed(2)}`);
+  assert(marks.max - marks.min > 0.5, 'grill bars leave distinct marks');
+  await game(() => {
+    const g = window.__game;
+    const e = g.physics.entries.get(window.__grillSteak);
+    e.body.setTranslation({ x: 4.3, y: 0.99, z: 0.05 }, true);
+    e.body.setRotation({ x: 1, y: 0, z: 0, w: 0 }, true);
+    for (let i = 0; i < 60; i++) g.physics.step();
+    g.physics.sync();
+    g.rig.focusOn({ x: 4.05, y: 1.32 });
+  });
+  await settle(page);
+  await wait(1500);
+  await shot('grill-marks');
+
+  // --- Sous vide and air fryer readouts.
+  await game(() => {
+    const g = window.__game;
+    g.appliances.sousVide.on = true;
+    g.appliances.airFryer.timer = 10 * 60;
+    g.fastForward(20 * 60);
+    g.rig.focusOn({ x: 5.85, y: 1.4 });
+  });
+  await settle(page);
+  await wait(1500);
+  const sv = await game(() => window.__game.appliances.sousVide.T);
+  console.log(`     sous vide after 20 min: ${F(sv).toFixed(1)}°F`);
+  assert(Math.abs(F(sv) - 131) < 1, 'sous vide holds 131 °F');
+  await shot('airfryer-sousvide');
+};
+
+scenarios.sousvide = async ({ page, shot, game, wait, assert }) => {
+  const r = await game(() => {
+    const g = window.__game;
+    g.appliances.sousVide.on = true;
+    g.fastForward(25 * 60);
+    const bag = g.spawn('vacuum-bag', { x: 5.95, y: 0.91, z: 0.18 });
+    const s = g.spawn('steak', { x: 5.95, y: 0.95, z: 0.18 });
+    for (let i = 0; i < 60; i++) {
+      g.physics.step();
+      g.updateBagging(1 / 30);
+    }
+    const sh = s.entry.body.handle;
+    const bagged = !!g.physics.entries.get(sh).data.bagged;
+    const bagGone = !g.items.has(bag.entry.body.handle);
+    const level0 = g.appliances.sousVideVolume.level;
+    // Drop it into the bath.
+    g.physics.entries.get(sh).body.setTranslation({ x: 6.2, y: 1.06, z: 0.0 }, true);
+    for (let i = 0; i < 360; i++) g.physics.step();
+    g.physics.sync();
+    const y = g.bodyPos(sh).y;
+    const level1 = g.appliances.sousVideVolume.level;
+    g.fastForward(2 * 3600, 1);
+    const f = g.sim.foods.get(sh);
+    return { bagged, bagGone, y, rise: (level1 - level0) * 1000, coreF: f.coreF, browning: f.thermal.browning(), medium: f.thermal.env[2].medium };
+  });
+  console.log(`     ${JSON.stringify(r)}`);
+  assert(r.bagged && r.bagGone, 'steak dropped on the bag gets vacuum sealed');
+  assert(r.y < 0.95, `bagged steak sinks in the bath (y=${r.y.toFixed(3)})`);
+  assert(r.rise > 1, `water level rises when it goes in (${r.rise.toFixed(1)} mm)`);
+  assert(r.medium === 'bag' && Math.abs(r.coreF - 131) < 1.5, `cooks to 131 °F in the bag (${r.coreF.toFixed(1)})`);
+  assert(r.browning === 0, 'no browning in the bag');
+  await game(() => window.__game.rig.focusOn({ x: 6.15, y: 1.36 }));
+  await settle(page);
+  await wait(1500);
+  await shot('sous-vide-bath');
+};

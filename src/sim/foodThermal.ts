@@ -169,6 +169,11 @@ export class FoodThermal {
   readonly surfT: Float32Array;
   /** 1 where the face is a knife cut (not the food's original outside). */
   readonly isCut: Uint8Array;
+  /** Per-face contact multiplier (grill bars: 1 over a bar, ~0 over a gap). Default 1. */
+  readonly contactWeight: Float32Array;
+  /** Heat drawn from the contact surface / surrounding fluid since last reset, J (for pans, oil, baths). */
+  contactHeat = 0;
+  fluidHeat = 0;
   readonly faceCount: number;
   /** How many cells in from the extreme plane of its direction each face sits (0 = outermost). */
   readonly faceLayer: Uint8Array;
@@ -288,6 +293,7 @@ export class FoodThermal {
     this.charred = new Float32Array(this.faceCount);
     this.surfT = new Float32Array(this.faceCount).fill(T0);
     this.isCut = new Uint8Array(this.faceCount);
+    this.contactWeight = new Float32Array(this.faceCount).fill(1);
     this.areaScale = opts.areaScale ?? FoodThermal.trueArea(props.shape, size) / voxelArea;
 
     const alpha = ((1 + VAPOR_K) * props.k) / (props.rho * props.cp);
@@ -440,7 +446,7 @@ export class FoodThermal {
       const Tc = T[c];
       // Only faces on the outermost layer in this direction can touch a flat surface (a potato touches
       // the pan with its underside, not its whole lower half).
-      const cf = this.faceLayer[f] === 0 ? env.contactFrac : this.faceLayer[f] === 1 ? env.contactFrac * 0.35 : 0;
+      const cf = (this.faceLayer[f] === 0 ? env.contactFrac : this.faceLayer[f] === 1 ? env.contactFrac * 0.35 : 0) * this.contactWeight[f];
       const hc = env.contactH * cf;
       const hv = env.fluidH * (1 - cf);
       let hr = 0;
@@ -496,6 +502,9 @@ export class FoodThermal {
 
       Tn[c] += (q * scale * dt) / (rc * dn);
       this.surfT[f] = Ts;
+      // Energy bookkeeping: what the pan / grate gave, and what the fluid (air, oil, water) gave.
+      if (hc > 0) this.contactHeat += hc * (env.contactT - Ts) * area * dt;
+      this.fluidHeat += hv * (env.fluidT - Ts) * area * dt;
 
       if (!wet || Ts > BOIL_C) {
         const dryness = wet ? 0.3 : 1;

@@ -70,6 +70,8 @@ export interface KitchenLayout {
 }
 
 export const COUNTER_TOP = 0.9;
+/** Grill grate bars (run along z): where they are decides where grill marks land. */
+export const GRILL_BARS = { x0: 3.66, x1: 4.06, top: 0.91, width: 0.012, gap: 0.018 };
 const TOP_T = 0.04; // counter slab thickness
 const DEPTH = 0.65;
 const FRONT = DEPTH / 2;
@@ -264,7 +266,7 @@ counter(1.4, 2.8);
 {
   counter(3.6, 4.6, { x0: 3.64, x1: 4.08, z0: -0.27, z1: 0.27, depth: 0.16, wallMaterial: 'steel', wallColor: 0x2a2a2a });
   // Grill grate just below counter height over the firebox.
-  bars(3.66, 4.06, -0.25, 0.25, COUNTER_TOP + 0.01, 0.012, 0.018, 'z', 'castIron', 'grate', 0x222222);
+  bars(GRILL_BARS.x0, GRILL_BARS.x1, -0.25, 0.25, GRILL_BARS.top, GRILL_BARS.width, GRILL_BARS.gap, 'z', 'castIron', 'grate', 0x222222);
   box(3.66, 4.06, COUNTER_TOP - 0.15, COUNTER_TOP - 0.13, -0.25, 0.25, 'castIron', { color: 0x3d1d10, emissive: 0x000000, visualOnly: true, tag: 'grill-coals' });
   zones.push({ id: 'grill', kind: 'grill', pos: [3.86, COUNTER_TOP + 0.04, 0], size: [0.4, 0.06, 0.5] });
   // Flat-top griddle plate.
