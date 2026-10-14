@@ -90,7 +90,7 @@ export class FoodView {
     for (let f = 0; f < t.faceCount; f++) {
       if (t.isCut[f]) continue;
       const c = t.faceCell[f];
-      const col = surfaceColor(props, this.raw, t.peak[c], t.brown[f], t.charred[f], t.w[c] / t.w0, t.starch[c], t.soft[c]);
+      const col = surfaceColor(props, this.raw, t.peak[c], t.brown[f], t.charred[f], t.w[c] / t.w0c[c], t.starch[c], t.soft[c], t.tissue[c], t.spiceBurn[f], t.spice[f]);
       const wet = Math.min(t.crust[f] / (t.crustMax || 1), 1) * (props.protein ? 0.9 : 0.6) + (t.fat[c] < (props.fat ?? 0) * 0.7 ? 0.25 : 0);
       acc[c * 4] += col[0];
       acc[c * 4 + 1] += col[1];

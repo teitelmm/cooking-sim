@@ -90,6 +90,9 @@ function piece(parent: FoodItem, n: V3, d: number): FoodItem | null {
     let pc = pt.cellAt(p[0], p[1], p[2]);
     if (pc < 0 || !pt.mask[pc]) pc = nearestMasked(pt, p);
     for (const f of fields) (ct[f] as Float32Array)[c] = (pt[f] as Float32Array)[pc];
+    ct.tissue[c] = pt.tissue[pc];
+    ct.w0c[c] = pt.w0c[pc];
+    ct.capRel[c] = pt.capRel[pc];
   }
 
   // Faces: inherit the parent's surface where this face lies on it; otherwise it's a fresh cut.
@@ -128,6 +131,10 @@ function piece(parent: FoodItem, n: V3, d: number): FoodItem | null {
         ct.charred[f] = pt.charred[pf];
         ct.surfT[f] = pt.surfT[pf];
         ct.isCut[f] = pt.isCut[pf];
+        ct.salt[f] = pt.salt[pf];
+        ct.saltAge[f] = pt.saltAge[pf];
+        ct.spice[f] = pt.spice[pf];
+        ct.spiceBurn[f] = pt.spiceBurn[pf];
         continue;
       }
     }

@@ -122,8 +122,10 @@ export function crossSectionImage(food: FoodItem, plane: Plane, rawColor: number
       const w = t.sample(t.w, p[0], p[1], p[2]) / t.w0;
       const gel = t.sample(t.starch, p[0], p[1], p[2]);
       const soft = t.sample(t.soft, p[0], p[1], p[2]);
-      let c: RGB = interiorColor(food.props, peak, w, gel, soft, raw);
-      if (fat > 0) {
+      const cell = t.cellAt(p[0], p[1], p[2]);
+      const tissue = cell >= 0 ? t.tissue[cell] : 0;
+      let c: RGB = interiorColor(food.props, peak, w, gel, soft, raw, tissue);
+      if (fat > 0 && tissue === 0) {
         const g: V3 = [p[0] + food.origin[0], p[1] + food.origin[1], p[2] + food.origin[2]];
         const m = marbling(g[0], g[1], g[2], fat);
         if (m > 0) c = mix(c, fatColor(peak), m * 0.9);
@@ -141,7 +143,7 @@ export function crossSectionImage(food: FoodItem, plane: Plane, rawColor: number
           const char = t.charred[fIdx];
           const band = crustBand * Math.min(1, 0.35 + brown * 0.6 + char);
           if (skin.d <= band) {
-            const sc = surfaceColor(food.props, raw, peak, brown, char, w, gel, soft);
+            const sc = surfaceColor(food.props, raw, peak, brown, char, w, gel, soft, tissue, t.spiceBurn[fIdx], t.spice[fIdx]);
             c = mix(c, sc, 1 - skin.d / (band * 1.2));
           }
         }

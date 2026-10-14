@@ -335,3 +335,37 @@ scenarios.liquids = async ({ page, shot, game, wait, assert }) => {
   await wait(1500);
   await shot('boil-and-smoke');
 };
+
+scenarios.probe_therm = async ({ page, shot, game, wait, assert }) => {
+  const r = await game(() => {
+    const g = window.__game;
+    g.appliances.burners[2].knob = 0.85;
+    g.fastForward(300);
+    const s = g.spawn('steak', { x: 3.0, y: 0.99, z: 0.15 });
+    for (let i = 0; i < 120; i++) g.physics.step();
+    g.fastForward(360);
+    const sh = s.entry.body.handle;
+    const sp = g.bodyPos(sh);
+    // Hold the probe angled into the side of the steak.
+    const p = g.spawn('probe-thermometer', { x: sp.x - 0.16, y: sp.y + 0.02, z: sp.z });
+    const pb = p.entry.body;
+    pb.setRotation({ x: 0, y: 0, z: -0.0998, w: 0.995 }, true);
+    g.grab.heldHandle = pb.handle;
+    let reading = null;
+    for (let i = 0; i < 40 && reading === null; i++) {
+      pb.setTranslation({ x: sp.x - 0.16 + i * 0.004, y: sp.y + 0.025, z: sp.z }, true);
+      g.probes.frame();
+      reading = g.probes.readF(sh);
+    }
+    g.grab.heldHandle = null;
+    const core = g.sim.foods.get(sh).coreF;
+    return { reading, core };
+  });
+  console.log('     ' + JSON.stringify(r));
+  assert(r.reading !== null, 'probe stabbed into the steak');
+  assert(Math.abs(r.reading - r.core) < 12, 'probe reads near the core temperature');
+  await game(() => window.__game.rig.focusOn({ x: 3.05, y: 1.32 }));
+  await settle(page);
+  await wait(1500);
+  await shot('probe');
+};

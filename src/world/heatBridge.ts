@@ -20,6 +20,11 @@ type Contact =
 
 type Fluid = 'oven' | 'airFryer' | 'sousVide' | Contents | null;
 
+/** Inside foil: no evaporation, radiant heat mostly reflected, but trapped steam/juices braise (good transfer). */
+export function foilEnv(e: FaceEnv): FaceEnv {
+  return { ...e, medium: 'bag', fluidH: e.fluidH * 1.8, radView: e.radView * 0.35 };
+}
+
 const tmpQ = new THREE.Quaternion();
 const tmpV = new THREE.Vector3();
 
@@ -238,6 +243,12 @@ export class HeatBridge {
           envs[down].radT = 400 + 700 * (b.power / b.spec.maxW);
           envs[down].radView = b.power > 20 ? 0.6 : 0;
         }
+      }
+    }
+    if (e.data.foil) {
+      // Foil: steam stays in (no evaporation/browning), radiant heat mostly reflected, contact still conducts.
+      for (let d = 0; d < 6; d++) {
+        if (envs[d].medium === 'air') envs[d] = foilEnv(envs[d]);
       }
     }
     for (let d = 0; d < 6; d++) food.setEnv(d, envs[d]);

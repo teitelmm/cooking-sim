@@ -36,6 +36,22 @@ export const enum Dir {
 
 export type Medium = 'air' | 'water' | 'oil' | 'bag';
 
+/** Tissue per cell: lean, fat (caps, marbling pockets), bone, skin. */
+export const enum Tissue {
+  Lean = 0,
+  Fat = 1,
+  Bone = 2,
+  Skin = 3,
+}
+
+/** Per-tissue properties relative to the food's base props (conductivity, heat capacity) and absolute water/fat. */
+export const TISSUE = [
+  { k: 1, cap: 1, water: -1, fat: -1, protein: true },
+  { k: 0.45, cap: 0.56, water: 0.15, fat: 0.8, protein: false },
+  { k: 0.6, cap: 0.9, water: 0.25, fat: 0.05, protein: false },
+  { k: 0.8, cap: 0.9, water: 0.5, fat: 0.35, protein: true },
+] as const;
+
 /** What one face of the food is exposed to. Temperatures in °C, heat-transfer coefficients in W/(m²·K). */
 export interface FaceEnv {
   medium: Medium;
@@ -159,6 +175,12 @@ export class FoodThermal {
   readonly soft: Float32Array;
   /** Remaining solid fat, kg per kg. */
   readonly fat: Float32Array;
+  /** Tissue type per cell (see Tissue). */
+  readonly tissue: Uint8Array;
+  /** Initial water per cell (tissue-dependent), kg/kg. */
+  readonly w0c: Float32Array;
+  /** Heat-capacity multiplier per cell (fat stores less heat than lean). */
+  readonly capRel: Float32Array;
 
   // Exposed faces (cell, local direction) and their crust state.
   readonly faceCell: Int32Array;
@@ -171,6 +193,11 @@ export class FoodThermal {
   readonly isCut: Uint8Array;
   /** Per-face contact multiplier (grill bars: 1 over a bar, ~0 over a gap). Default 1. */
   readonly contactWeight: Float32Array;
+  /** Seasoning per face: salt and spice (kg/m²), time since salted (s), how burnt the spice is (0..1). */
+  readonly salt: Float32Array;
+  readonly saltAge: Float32Array;
+  readonly spice: Float32Array;
+  readonly spiceBurn: Float32Array;
   /** Heat drawn from the contact surface / surrounding fluid since last reset, J (for pans, oil, baths). */
   contactHeat = 0;
   fluidHeat = 0;
@@ -222,7 +249,10 @@ export class FoodThermal {
           const s = ((k + 0.5) / this.nz) * 2 - 1;
           let inside = true;
           if (opts.inside) inside = opts.inside(u * size[0] * 0.5, v * size[1] * 0.5, s * size[2] * 0.5);
-          else if (props.shape === 'ellipsoid') inside = u * u + v * v + s * s <= 1.0001;
+          else if (props.shape === 'ellipsoid') {
+            const r2 = u * u + v * v + s * s;
+            inside = r2 <= 1.0001 && (!props.hollow || r2 >= props.hollow * props.hollow);
+          }
           else if (props.shape === 'cylinderX') inside = v * v + s * s <= 1.0001;
           if (inside) {
             this.mask[this.idx(i, j, k)] = 1;
@@ -246,6 +276,17 @@ export class FoodThermal {
     this.starch = new Float32Array(N);
     this.soft = new Float32Array(N);
     this.fat = new Float32Array(N).fill(props.fat ?? 0);
+    this.tissue = new Uint8Array(N);
+    this.w0c = new Float32Array(N).fill(props.water);
+    this.capRel = new Float32Array(N).fill(1);
+    if (props.tissue) {
+      for (let c = 0; c < N; c++) {
+        if (!this.mask[c]) continue;
+        const cc = this.cellCenter(c);
+        const ti = props.tissue(cc[0] / (size[0] / 2), cc[1] / (size[1] / 2), cc[2] / (size[2] / 2), size, cc);
+        this.setTissue(c, ti);
+      }
+    }
     this.mass0 = count * this.cellMass;
 
     // Exposed faces.
@@ -294,6 +335,10 @@ export class FoodThermal {
     this.surfT = new Float32Array(this.faceCount).fill(T0);
     this.isCut = new Uint8Array(this.faceCount);
     this.contactWeight = new Float32Array(this.faceCount).fill(1);
+    this.salt = new Float32Array(this.faceCount);
+    this.saltAge = new Float32Array(this.faceCount);
+    this.spice = new Float32Array(this.faceCount);
+    this.spiceBurn = new Float32Array(this.faceCount);
     this.areaScale = opts.areaScale ?? FoodThermal.trueArea(props.shape, size) / voxelArea;
 
     const alpha = ((1 + VAPOR_K) * props.k) / (props.rho * props.cp);
@@ -323,6 +368,29 @@ export class FoodThermal {
     }
     const p = 1.6075; // Knud Thomsen ellipsoid approximation
     return 4 * Math.PI * (((a * b) ** p + (a * c) ** p + (b * c) ** p) / 3) ** (1 / p);
+  }
+
+  setTissue(c: number, ti: number): void {
+    const t = TISSUE[ti] ?? TISSUE[0];
+    this.tissue[c] = ti;
+    this.capRel[c] = t.cap;
+    if (t.water >= 0) this.w0c[c] = this.w[c] = t.water;
+    if (t.fat >= 0) this.fat[c] = t.fat;
+  }
+
+  /**
+   * Season faces (all, or the given local directions). Salt draws moisture out to the surface, then (after
+   * ~15 min) it's re-absorbed and the surface dries — a dry-brined steak browns faster. Pepper and other
+   * spices sit on the surface and burn above ~400 °F.
+   */
+  season(kind: 'salt' | 'spice', kgPerM2: number, dirs?: number[]): void {
+    for (let f = 0; f < this.faceCount; f++) {
+      if (dirs && !dirs.includes(this.faceDir[f])) continue;
+      if (kind === 'salt') {
+        this.salt[f] += kgPerM2;
+        this.saltAge[f] = 0;
+      } else this.spice[f] += kgPerM2;
+    }
   }
 
   /** Cell containing local point (grid-centered metres), or −1 if outside the grid. */
@@ -405,8 +473,8 @@ export class FoodThermal {
     const kf = this.kFactor;
     for (let c = 0; c < this.N; c++) {
       if (!mask[c]) continue;
-      const moist = Math.min(this.w[c] / (this.w0 || 1), 1);
-      kf[c] = 1 + VAPOR_K * moist * Math.exp((Math.min(T[c], BOIL_C) - BOIL_C) / VAPOR_K_SCALE);
+      const moist = Math.min(this.w[c] / (this.w0c[c] || 1), 1) * (this.w0c[c] / (this.w0 || 1));
+      kf[c] = (1 + VAPOR_K * moist * Math.exp((Math.min(T[c], BOIL_C) - BOIL_C) / VAPOR_K_SCALE)) * TISSUE[this.tissue[c]].k;
     }
 
     // 1. Interior conduction (insulated where the neighbor is outside the food; surfaces handled below).
@@ -424,7 +492,7 @@ export class FoodThermal {
           if (j < ny - 1 && mask[c + sy]) lap += cy * (kc + kf[c + sy]) * (T[c + sy] - t);
           if (k > 0 && mask[c - sz]) lap += cz * (kc + kf[c - sz]) * (T[c - sz] - t);
           if (k < nz - 1 && mask[c + sz]) lap += cz * (kc + kf[c + sz]) * (T[c + sz] - t);
-          Tn[c] = t + 0.5 * lap * dt;
+          Tn[c] = t + (0.5 * lap * dt) / this.capRel[c];
         }
 
     // 2. Surface exchange per exposed face.
@@ -440,7 +508,7 @@ export class FoodThermal {
       const area = this.faceArea(dir) * scale;
       // Dehydrated crust insulates: the dried layer (crust film + dehydrated tissue) adds series resistance.
       const dryFrac = 1 - Math.min(this.crust[f] / this.crustMax, 1);
-      const dehydrated = Math.min(Math.max(1 - this.w[c] / this.w0 - 0.3, 0), 1);
+      const dehydrated = Math.min(Math.max(1 - this.w[c] / this.w0c[c] - 0.3, 0), 1);
       const dryDepth = Math.min(CRUST_DEPTH * dryFrac + dn * dehydrated, MAX_CRUST);
       const G = 1 / (dn / G0 + dryDepth / K_CRUST);
       const Tc = T[c];
@@ -495,12 +563,23 @@ export class FoodThermal {
         this.evaporated += kg;
       }
       // Interior moisture slowly re-wets the crust (diffusion to the surface).
-      if (env.medium !== 'water' && env.medium !== 'bag' && this.crust[f] < this.crustMax && this.w[c] > 0.2 * this.w0) {
-        const add = REWET * (this.w[c] / this.w0) * (1 - this.crust[f] / this.crustMax) * dt;
+      if (env.medium !== 'water' && env.medium !== 'bag' && this.crust[f] < this.crustMax && this.w[c] > 0.2 * this.w0c[c]) {
+        const add = REWET * (this.w[c] / this.w0c[c]) * (this.w0c[c] / this.w0) * (1 - this.crust[f] / this.crustMax) * dt;
         this.crust[f] += add;
       }
+      // Salt: draws moisture out (wet surface) for ~15 min, then it's re-absorbed and the surface dries.
+      if (this.salt[f] > 0) {
+        const age = (this.saltAge[f] += dt);
+        const s = Math.min(this.salt[f] / 0.008, 1.5);
+        if (Ts < 45) {
+          if (age < 900) this.crust[f] += 8e-5 * s * dt;
+          else if (age < 3600 && this.crust[f] > this.crustMax * 0.55) this.crust[f] = Math.max(this.crustMax * 0.55, this.crust[f] - 1.2e-4 * s * dt);
+        }
+      }
+      // Spices on a very hot face scorch (bitter, blackened pepper).
+      if (this.spice[f] > 0 && Ts > 180) this.spiceBurn[f] = Math.min(1, this.spiceBurn[f] + 0.004 * Math.exp((Ts - 205) / 12) * dt);
 
-      Tn[c] += (q * scale * dt) / (rc * dn);
+      Tn[c] += (q * scale * dt) / (rc * dn * this.capRel[c]);
       this.surfT[f] = Ts;
       // Energy bookkeeping: what the pan / grate gave, and what the fluid (air, oil, water) gave.
       if (hc > 0) this.contactHeat += hc * (env.contactT - Ts) * area * dt;
@@ -517,23 +596,23 @@ export class FoodThermal {
 
     // 3. Per-cell chemistry.
     let purge = 0;
-    const w0 = this.w0;
     const L = LATENT;
     for (let c = 0; c < this.N; c++) {
       if (!mask[c]) continue;
       let t = Tn[c];
       // Interior water boils off above 100 °C (keeps the cell pinned while it has water).
-      if (t > BOIL_C && this.w[c] > 0.05 * w0) {
-        const dw = Math.min(((t - BOIL_C) * props.cp) / L, this.w[c] - 0.05 * w0);
+      const w0cell = this.w0c[c];
+      if (t > BOIL_C && this.w[c] > 0.05 * w0cell) {
+        const dw = Math.min(((t - BOIL_C) * props.cp * this.capRel[c]) / L, this.w[c] - 0.05 * w0cell);
         this.w[c] -= dw;
         this.evaporated += dw * this.cellMass;
-        t = BOIL_C + (((t - BOIL_C) * props.cp - dw * L) / props.cp);
+        t = BOIL_C + (((t - BOIL_C) * props.cp * this.capRel[c] - dw * L) / (props.cp * this.capRel[c]));
       }
       T[c] = t;
       if (t > this.peak[c]) this.peak[c] = t;
 
-      if (props.protein) {
-        const target = w0 * waterHolding(this.peak[c]);
+      if (props.protein && TISSUE[this.tissue[c]].protein) {
+        const target = w0cell * waterHolding(this.peak[c]);
         if (this.w[c] > target) {
           const out = ((this.w[c] - target) * dt) / SQUEEZE_TAU;
           this.w[c] -= out;
@@ -562,10 +641,10 @@ export class FoodThermal {
       }
       if (this.collagen[c] > 0 && t > 55) {
         // Collagen → gelatin: hours at 160–200 °F (ribs: tender ≈ 195–203 °F internal).
-        const k = 2.3e-5 * Math.exp((t - 70) / 8);
+        const k = 1.2e-5 * Math.exp((t - 70) / 8);
         this.collagen[c] *= Math.exp(-k * dt);
       }
-      if (props.starch && t > 58 && this.w[c] > 0.4 * w0) {
+      if (props.starch && t > 58 && this.w[c] > 0.4 * w0cell) {
         const k = 6.8e-4 * Math.exp((t - 80) / 6);
         this.starch[c] += (1 - this.starch[c]) * (1 - Math.exp(-k * dt));
       }
@@ -681,15 +760,27 @@ export class FoodThermal {
     return s / this.cellCount;
   }
 
-  /** Remaining water as a fraction of the original (1 = raw-juicy, ~0.7 = dry well-done). */
+  /** Remaining water in the lean as a fraction of the original (1 = raw-juicy, ~0.7 = dry well-done). */
   juiciness(): number {
-    return this.mean(this.w) / this.w0;
+    let s = 0;
+    let n = 0;
+    for (let c = 0; c < this.N; c++) {
+      if (!this.mask[c] || this.tissue[c] !== Tissue.Lean) continue;
+      s += this.w[c] / this.w0c[c];
+      n++;
+    }
+    return n ? s / n : this.mean(this.w) / this.w0;
+  }
+
+  /** Mean of a face field over faces in direction dir (or all). */
+  faceMean(arr: Float32Array, dir?: number): number {
+    return this.faceStat(arr, dir);
   }
 
   /** Total current mass, kg. */
   mass(): number {
     let water = 0;
-    for (let c = 0; c < this.N; c++) if (this.mask[c]) water += this.w0 - this.w[c];
+    for (let c = 0; c < this.N; c++) if (this.mask[c]) water += this.w0c[c] - this.w[c];
     return this.mass0 - water * this.cellMass;
   }
 

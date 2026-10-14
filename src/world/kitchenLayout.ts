@@ -181,7 +181,13 @@ box(WIDTH + 0.5, WIDTH + 0.55, 0, 2.6, WALL_Z, FRONT + 0.4, 'tile', { color: 0xd
   spawners.push({ itemId: 'chicken-breast', pos: [0.56, 0.8, 0.08], label: 'Chicken breast' });
   spawners.push({ itemId: 'egg', pos: [0.24, 1.18, 0.1], label: 'Eggs' });
   spawners.push({ itemId: 'butter', pos: [0.55, 1.18, 0.08], label: 'Butter' });
-  spawners.push({ itemId: 'ribs', pos: [0.4, 0.42, 0.06], label: 'Pork ribs' });
+  spawners.push({ itemId: 'ribs', pos: [0.24, 0.42, 0.06], label: 'Pork ribs' });
+  spawners.push({ itemId: 'short-ribs', pos: [0.6, 0.42, 0.06], label: 'Short ribs' });
+  spawners.push({ itemId: 'whole-chicken', pos: [0.24, 0.12, 0.08], label: 'Whole chicken' });
+  spawners.push({ itemId: 'chicken-thigh', pos: [0.58, 0.12, 0.08], label: 'Chicken thighs' });
+  spawners.push({ itemId: 'ribeye-1in', pos: [0.2, 0.8, -0.14], label: 'Ribeye 1"' });
+  spawners.push({ itemId: 'thick-ribeye', pos: [0.42, 0.8, -0.14], label: 'Ribeye 2"' });
+  spawners.push({ itemId: 'strip-steak', pos: [0.64, 0.8, -0.14], label: 'NY strip' });
   spawners.push({ itemId: 'milk', pos: [0.6, 1.52, 0.02], label: 'Milk' });
 }
 {
@@ -310,6 +316,7 @@ counter(1.4, 2.8);
   box(6.32, 6.38, COUNTER_TOP + 0.04, COUNTER_TOP + 0.36, -0.16, -0.1, 'plastic', { color: 0x1a1a1a, visualOnly: true, tag: 'circulator' });
   zones.push({ id: 'sous-vide', kind: 'sousVide', pos: [6.2, COUNTER_TOP + 0.11, 0.0], size: [0.44, 0.2, 0.32] });
   spawners.push({ itemId: 'vacuum-bag', pos: [5.92, COUNTER_TOP, 0.18], label: 'Vacuum bag' });
+  spawners.push({ itemId: 'foil-sheet', pos: [5.62, COUNTER_TOP, 0.2], label: 'Foil' });
 }
 
 // ---------------------------------------------------------------- 8. sink (6.6 – 7.4)

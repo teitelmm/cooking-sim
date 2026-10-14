@@ -60,8 +60,11 @@ const POULTRY: [number, number][] = [
 ];
 
 /** Interior color of the food at a spot: by kind, peak temperature (°C), water fraction and starch/softness. */
-export function interiorColor(props: FoodProps, peakC: number, waterFrac: number, gel: number, soft: number, raw: RGB): RGB {
+export function interiorColor(props: FoodProps, peakC: number, waterFrac: number, gel: number, soft: number, raw: RGB, tissue = 0): RGB {
   const f = cToF(peakC);
+  if (tissue === 1) return fatColor(peakC);
+  if (tissue === 2) return mix(hex(0xece2cf), hex(0xc9b08a), Math.min(Math.max((f - 150) / 80, 0), 1));
+  if (tissue === 3) return mix(hex(0xf1d9bd), hex(0xe9cf9e), Math.min(Math.max((f - 130) / 50, 0), 1));
   let c: RGB;
   switch (props.kind as FoodKind) {
     case 'beef':
@@ -97,12 +100,15 @@ export function fatColor(peakC: number): RGB {
  * Exterior surface color: the raw surface color, gone gray/opaque where the surface itself cooked,
  * then Maillard browning (golden → deep mahogany) and finally char (black).
  */
-export function surfaceColor(props: FoodProps, raw: RGB, surfacePeakC: number, brown: number, char: number, waterFrac: number, gel: number, soft: number): RGB {
-  let c = props.protein || props.starch ? interiorColor(props, surfacePeakC, waterFrac, gel, soft, raw) : mix(raw, interiorColor(props, surfacePeakC, waterFrac, gel, soft, raw), 0.7);
+export function surfaceColor(props: FoodProps, raw: RGB, surfacePeakC: number, brown: number, char: number, waterFrac: number, gel: number, soft: number, tissue = 0, spiceBurn = 0, spice = 0): RGB {
+  let c = props.protein || props.starch ? interiorColor(props, surfacePeakC, waterFrac, gel, soft, raw, tissue) : mix(raw, interiorColor(props, surfacePeakC, waterFrac, gel, soft, raw), 0.7);
+  // Seasoning speckle tints the surface a little; scorched pepper goes black.
+  if (spice > 0) c = mix(c, hex(0x3b2a1e), Math.min(spice / 0.01, 1) * 0.25);
+  if (spiceBurn > 0) c = mix(c, hex(0x120d0a), spiceBurn * 0.5);
   if (props.kind === 'potato' && gel < 0.5) c = mix(raw, c, gel * 2); // skin stays skin-colored until cooked
   if (props.kind === 'potato') c = mix(raw, c, 0.5);
   const sugar = props.sugar ?? 0;
-  const golden = sugar > 0.3 ? hex(0xc58a3a) : props.kind === 'potato' ? hex(0xd9a650) : hex(0xa66a35);
+  const golden = sugar > 0.3 ? hex(0xc58a3a) : props.kind === 'potato' || tissue === 3 || tissue === 1 ? hex(0xd9a650) : hex(0xa66a35);
   const brownC = sugar > 0.3 ? hex(0x7a4a1c) : hex(0x6a3a1c);
   const deep = hex(0x47250f);
   if (brown > 0) {

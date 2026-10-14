@@ -26,6 +26,7 @@ import { KitchenAppliances } from './world/kitchenAppliances';
 import { HeatBridge } from './world/heatBridge';
 import { WaterSystem } from './world/water';
 import { LiquidSystem } from './world/liquids';
+import { ProbeSystem } from './world/probe';
 import { partVolume } from './world/shapes';
 import { zone } from './world/kitchenAppliances';
 import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
@@ -60,6 +61,7 @@ export class Game {
   readonly heat: HeatBridge;
   readonly water: WaterSystem;
   readonly liquids: LiquidSystem;
+  readonly probes: ProbeSystem;
   private bagTimers = new Map<number, number>();
   private lastGameTime = 0;
   ready = false;
@@ -102,6 +104,7 @@ export class Game {
     this.scene.add(faucetHit);
     this.liquids = new LiquidSystem(this.scene, this.physics, this.water, this.appliances.controls, faucetHit);
     this.liquids.floorAt = (x, y, z) => this.floorAt(x, y, z);
+    this.probes = new ProbeSystem(this);
     this.liquids.onSplash = (at, kg, kind) => this.juice.puddle(at, kg, kind === 'oil' ? [0.85, 0.65, 0.2] : [0.7, 0.8, 0.88], kind === 'oil' ? 920 : 1000);
     this.heat.liquidAt = (p) => {
       for (const k of this.liquids.all) {
@@ -331,6 +334,7 @@ export class Game {
         return { handle: b.handle, pos: new THREE.Vector3(t.x, t.y, t.z), up: new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w)) };
       });
     this.liquids.frame(dt, lids);
+    this.probes.frame();
     this.renderer.render(this.scene, this.camera);
     const held = this.grab.heldHandle !== null ? this.items.get(this.grab.heldHandle) : undefined;
     this.overlay.update(realDt, {
@@ -358,44 +362,56 @@ export class Game {
     return null;
   }
 
-  /** Seal a food in a vacuum bag (sous vide): it cooks in its own juices, can't brown, sinks in the bath. */
-  bag(foodHandle: number, bagHandle?: number): void {
+  /**
+   * Wrap a food: a vacuum bag (sous vide: cooks in its own juices, can't brown, sinks) or foil (the
+   * "Texas crutch": traps steam so ribs push through the stall, reflects radiant heat, softens the bark).
+   */
+  wrap(foodHandle: number, kind: 'bag' | 'foil', wrapperHandle?: number): void {
     const it = this.items.get(foodHandle);
     const food = it?.entry.data.food as FoodItem | undefined;
-    if (!it || !food || it.entry.data.bagged) return;
-    if (bagHandle !== undefined) this.despawn(bagHandle);
+    if (!it || !food || it.entry.data.bagged || it.entry.data.foil) return;
+    if (wrapperHandle !== undefined) this.despawn(wrapperHandle);
     const c = it.entry.data.foodCenter as [number, number, number];
-    const wrap = new THREE.Mesh(
-      new THREE.BoxGeometry(food.size[0] * 1.08 + 0.01, food.size[1] * 1.15 + 0.004, food.size[2] * 1.08 + 0.01),
-      new THREE.MeshStandardMaterial({ color: 0xe6eef2, transparent: true, opacity: 0.3, roughness: 0.12, depthWrite: false }),
-    );
-    wrap.position.set(...c);
-    wrap.name = 'vacuum-wrap';
-    it.view.add(wrap);
-    it.entry.data.bagged = true;
+    const mat =
+      kind === 'bag'
+        ? new THREE.MeshStandardMaterial({ color: 0xe6eef2, transparent: true, opacity: 0.3, roughness: 0.12, depthWrite: false })
+        : new THREE.MeshStandardMaterial({ color: 0xd8dcdf, roughness: 0.32, metalness: 0.9 });
+    const wrapMesh = new THREE.Mesh(new THREE.BoxGeometry(food.size[0] * 1.08 + 0.01, food.size[1] * 1.15 + 0.004, food.size[2] * 1.08 + 0.01), mat);
+    wrapMesh.position.set(...c);
+    wrapMesh.name = 'wrap';
+    it.view.add(wrapMesh);
+    if (kind === 'bag') it.entry.data.bagged = true;
+    else it.entry.data.foil = true;
   }
 
-  unbag(foodHandle: number): void {
+  bag(foodHandle: number, bagHandle?: number): void {
+    this.wrap(foodHandle, 'bag', bagHandle);
+  }
+
+  unwrap(foodHandle: number): void {
     const it = this.items.get(foodHandle);
-    if (!it?.entry.data.bagged) return;
-    const w = it.view.getObjectByName('vacuum-wrap');
+    if (!it || !(it.entry.data.bagged || it.entry.data.foil)) return;
+    const w = it.view.getObjectByName('wrap');
     if (w) it.view.remove(w);
+    const was = it.entry.data.bagged ? 'vacuum-bag' : 'foil-sheet';
     it.entry.data.bagged = false;
+    it.entry.data.foil = false;
     const p = it.entry.body.translation();
-    this.spawn('vacuum-bag', { x: p.x + 0.18, y: p.y + 0.05, z: p.z });
+    this.spawn(was, { x: p.x + 0.2, y: p.y + 0.05, z: p.z });
   }
 
-  /** Food resting on an empty vacuum bag for half a second gets sealed into it. */
+  /** Food resting on an empty bag or foil sheet for half a second gets wrapped in it. */
   private updateBagging(dt: number): void {
-    const bags = [...this.items.values()].filter((i) => i.def.id === 'vacuum-bag');
-    for (const bag of bags) {
+    const wrappers = [...this.items.values()].filter((i) => i.def.id === 'vacuum-bag' || i.def.id === 'foil-sheet');
+    for (const bag of wrappers) {
       const bp = bag.entry.body.translation();
+      const half = bag.def.id === 'foil-sheet' ? [0.17, 0.13] : [0.11, 0.08];
       let found: number | undefined;
       for (const [h] of this.sim.foods) {
         const e = this.physics.entries.get(h);
-        if (!e || e.data.bagged || this.grab.heldHandle === h) continue;
+        if (!e || e.data.bagged || e.data.foil || this.grab.heldHandle === h) continue;
         const p = e.body.translation();
-        if (Math.abs(p.x - bp.x) < 0.11 && Math.abs(p.z - bp.z) < 0.08 && p.y > bp.y && p.y - bp.y < 0.08) found = h;
+        if (Math.abs(p.x - bp.x) < half[0] && Math.abs(p.z - bp.z) < half[1] && p.y > bp.y && p.y - bp.y < 0.08) found = h;
       }
       const k = bag.entry.body.handle;
       if (found === undefined) {
@@ -406,7 +422,7 @@ export class Game {
       this.bagTimers.set(k, t);
       if (t > 0.5) {
         this.bagTimers.delete(k);
-        this.bag(found, k);
+        this.wrap(found, bag.def.id === 'foil-sheet' ? 'foil' : 'bag', k);
       }
     }
   }
@@ -419,7 +435,7 @@ export class Game {
     if (!hit) return;
     let o: THREE.Object3D | null = hit.object;
     while (o && o.userData.bodyHandle === undefined) o = o.parent;
-    if (o) this.unbag(o.userData.bodyHandle as number);
+    if (o) this.unwrap(o.userData.bodyHandle as number);
   }
 
   /** Run the cooking sim (appliances, cookware, food) forward by game seconds without rendering. */

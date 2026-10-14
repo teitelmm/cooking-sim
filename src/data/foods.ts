@@ -34,17 +34,58 @@ export interface FoodProps {
   surfaceWater?: number;
   /** Softening for veg (pectin breakdown) per unit time at temperature. */
   softens?: boolean;
+  /** Hollow cavity (whole bird) as a fraction of the radius. */
+  hollow?: number;
+  /**
+   * Tissue layout: normalized coords u, v, w in −1..1 (and size/local metres) → 0 lean, 1 fat, 2 bone, 3 skin.
+   */
+  tissue?: (u: number, v: number, w: number, size: [number, number, number], p: [number, number, number]) => number;
   shape: FoodShape;
 }
 
 const meat = { k: 0.45, rho: 1050, cp: 3500, protein: true } as const;
 
+/** Fat cap along one long edge (+z), ~1 cm thick. */
+const fatCapZ = (_u: number, _v: number, _w: number, size: [number, number, number], p: [number, number, number]) => (p[2] > size[2] / 2 - 0.009 ? 1 : 0);
+/** Skin on top (≈ 2.5 mm), bone through the middle along x. */
+const thigh = (_u: number, v: number, w: number, size: [number, number, number], p: [number, number, number]) =>
+  p[1] > size[1] / 2 - 0.003 ? 3 : Math.abs(v) < 0.3 && Math.abs(w) < 0.18 ? 2 : 0;
+/** Whole bird: skin shell; keel/back bones near the cavity. */
+const bird = (u: number, v: number, w: number) => {
+  const r = Math.sqrt(u * u + v * v + w * w);
+  return r > 0.9 ? 3 : r < 0.62 && v < -0.2 ? 2 : 0;
+};
+/** Rack of ribs: bones run across (along z) every 3.5 cm in the lower part. */
+const ribBones = (_u: number, v: number, _w: number, size: [number, number, number], p: [number, number, number]) => {
+  const x = p[0] + size[0] / 2;
+  const m = ((x % 0.035) + 0.035) % 0.035;
+  return Math.abs(m - 0.0175) < 0.0055 && v < 0.15 && v > -0.75 ? 2 : p[1] > size[1] / 2 - 0.004 ? 1 : 0;
+};
+/** Bone-in short rib: flat bone along the bottom, fat seam above it. */
+const shortRib = (_u: number, v: number) => (v < -0.62 ? 2 : v < -0.45 ? 1 : 0);
+
 export const FOODS: Record<string, FoodProps> = {
-  steak: { ...meat, kind: 'beef', water: 0.72, collagen: 0.15, fat: 0.12, safeTempF: 130, surfaceWater: 0.04, shape: 'box' },
+  steak: { ...meat, kind: 'beef', water: 0.72, collagen: 0.15, fat: 0.12, safeTempF: 130, surfaceWater: 0.04, shape: 'box', tissue: fatCapZ },
+  'ribeye-1in': { ...meat, kind: 'beef', water: 0.72, collagen: 0.15, fat: 0.12, safeTempF: 130, surfaceWater: 0.04, shape: 'box', tissue: fatCapZ },
+  'thick-ribeye': { ...meat, kind: 'beef', water: 0.72, collagen: 0.15, fat: 0.12, safeTempF: 130, surfaceWater: 0.04, shape: 'box', tissue: fatCapZ },
+  'strip-steak': { ...meat, kind: 'beef', water: 0.73, collagen: 0.12, fat: 0.07, safeTempF: 130, surfaceWater: 0.04, shape: 'box', tissue: fatCapZ },
   'chicken-breast': { ...meat, k: 0.48, kind: 'poultry', water: 0.75, collagen: 0.05, fat: 0.03, safeTempF: 165, surfaceWater: 0.05, shape: 'box' },
-  'chicken-thigh': { ...meat, k: 0.46, kind: 'poultry', water: 0.73, collagen: 0.3, fat: 0.1, safeTempF: 165, surfaceWater: 0.05, shape: 'box' },
-  ribs: { ...meat, k: 0.44, kind: 'pork', water: 0.6, collagen: 1.0, fat: 0.22, safeTempF: 145, surfaceWater: 0.03, shape: 'box' },
-  'short-ribs': { ...meat, k: 0.44, kind: 'beef', water: 0.6, collagen: 1.0, fat: 0.25, safeTempF: 145, surfaceWater: 0.03, shape: 'box' },
+  'chicken-thigh': { ...meat, k: 0.46, kind: 'poultry', water: 0.73, collagen: 0.3, fat: 0.1, safeTempF: 165, surfaceWater: 0.05, shape: 'box', tissue: thigh },
+  'whole-chicken': {
+    ...meat,
+    k: 0.47,
+    kind: 'poultry',
+    water: 0.74,
+    collagen: 0.2,
+    fat: 0.08,
+    safeTempF: 165,
+    surfaceWater: 0.05,
+    shape: 'ellipsoid',
+    hollow: 0.45,
+    tissue: bird,
+  },
+  ribs: { ...meat, k: 0.44, kind: 'pork', water: 0.6, collagen: 1.0, fat: 0.22, safeTempF: 145, surfaceWater: 0.03, shape: 'box', tissue: ribBones },
+  'short-ribs': { ...meat, k: 0.44, kind: 'beef', water: 0.6, collagen: 1.0, fat: 0.25, safeTempF: 145, surfaceWater: 0.03, shape: 'box', tissue: shortRib },
   potato: { kind: 'potato', k: 0.55, rho: 1080, cp: 3600, water: 0.79, starch: 1, shape: 'ellipsoid', softens: true, surfaceWater: 0.02 },
   carrot: { kind: 'veg', k: 0.6, rho: 1040, cp: 3800, water: 0.88, sugar: 0.6, softens: true, browning: 1.4, char: 1.3, shape: 'cylinderX' },
   onion: { kind: 'veg', k: 0.55, rho: 960, cp: 3800, water: 0.89, sugar: 0.8, softens: true, browning: 1.6, char: 1.4, shape: 'ellipsoid' },
