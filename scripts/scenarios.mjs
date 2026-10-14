@@ -68,3 +68,49 @@ scenarios.grab = async ({ page, shot, game, wait, assert }) => {
   assert(p2.y < p1.y, 'steak falls after release');
   await shot('grab-released');
 };
+
+scenarios.kitchen = async ({ page, shot, game, wait, assert }) => {
+  await wait(1000);
+  const xs = [0.85, 2.4, 3.7, 5.2, 6.6, 7.35];
+  for (let i = 0; i < xs.length; i++) {
+    await game((x) => window.__game.rig.focusOn({ x, y: 1.5 }), xs[i]);
+    await page.waitForFunction(() => !window.__game.rig.moving, null, { timeout: 30_000 });
+    await wait(300);
+    const x = await game(() => window.__game.rig.x);
+    assert(Math.abs(x - xs[i]) < 0.05, `camera reached x=${xs[i]} (at ${x.toFixed(2)})`);
+    await shot(`kitchen-pan-${i}`);
+  }
+  // Real drag across from right edge back left.
+  const before = await game(() => window.__game.rig.x);
+  await mouseDrag(page, 1000, 60, 200, 60, 25);
+  await wait(800);
+  const after = await game(() => window.__game.rig.x);
+  assert(after < before - 0.5, 'background drag pans the kitchen');
+  await wait(2000);
+  const fps = await game(() => window.__game.overlay.fps);
+  console.log(`     idle FPS (software renderer): ${fps.toFixed(1)}`);
+};
+
+scenarios.spawner = async ({ page, shot, game, wait, assert }) => {
+  await game(() => window.__game.rig.focusOn({ x: 0.85, y: 1.45 }));
+  await page.waitForFunction(() => !window.__game.rig.moving, null, { timeout: 30_000 });
+  const n0 = await game(() => window.__game.items.size);
+  const p = await game(() => {
+    const g = window.__game;
+    const d = g.grab.spawnerDisplays.find((o) => o.userData.spawner.itemId === 'steak');
+    const v = d.position.clone().project(g.camera);
+    return { x: (v.x * 0.5 + 0.5) * innerWidth, y: (-v.y * 0.5 + 0.5) * innerHeight };
+  });
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 20; i++) {
+    await page.mouse.move(p.x + i * 15, p.y + i * 4);
+    await wait(16);
+  }
+  await wait(500);
+  await shot('spawner-drag');
+  await page.mouse.up();
+  await wait(800);
+  const n1 = await game(() => window.__game.items.size);
+  assert(n1 === n0 + 1, `dragging the fridge steak spawned one item (${n0} → ${n1})`);
+};

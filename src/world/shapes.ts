@@ -158,3 +158,20 @@ function roundedBox(size: Vec3, radius: number): THREE.BufferGeometry {
   g.computeVertexNormals();
   return g;
 }
+
+const boundsCache = new Map<ShapePart[], THREE.Box3>();
+/** Local-space AABB of an item's parts (cached). */
+export function partsBounds(parts: ShapePart[]): THREE.Box3 {
+  let b = boundsCache.get(parts);
+  if (!b) {
+    b = new THREE.Box3();
+    for (const p of parts) {
+      const g = buildPartGeometry(p);
+      g.computeBoundingBox();
+      b.union(g.boundingBox!);
+      g.dispose();
+    }
+    boundsCache.set(parts, b);
+  }
+  return b;
+}

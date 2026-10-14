@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { FixedLoop } from './engine/loop';
 import { createRenderer, bindResize } from './engine/renderer';
-import { PhysicsWorld, RAPIER } from './engine/physics';
+import { PhysicsWorld } from './engine/physics';
 import { EventBus } from './engine/events';
 import { SimWorld } from './sim/simWorld';
 import { DebugOverlay } from './ui/debugOverlay';
@@ -11,7 +11,10 @@ import { PointerRouter } from './engine/input';
 import { GrabInteraction } from './engine/grabInteraction';
 import { Audio } from './engine/audio';
 import { itemDef } from './data/items';
-import { spawnItem, type SpawnedItem } from './world/itemFactory';
+import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
+import { KITCHEN } from './world/kitchenLayout';
+import { buildKitchenColliders, buildKitchenVisuals, KitchenLights } from './world/kitchenBuilder';
+import { buildSpawnerDisplays, MAX_LIVE_ITEMS, spawnPosition } from './world/spawners';
 
 /** Fraction of the screen width at each edge where a held item auto-pans the camera. */
 const EDGE_PAN_ZONE = 0.08;
@@ -26,7 +29,10 @@ export class Game {
   readonly sim = new SimWorld();
   readonly loop: FixedLoop;
   readonly overlay: DebugOverlay;
-  readonly rig = new CameraRig({ minX: -3, maxX: 3, minY: 1.25, maxY: 1.75, minZ: 1.25, maxZ: 2.05 }, { x: 0, y: 1.45, z: 1.65 });
+  readonly rig = new CameraRig(KITCHEN.camera, { x: KITCHEN.camera.start[0], y: KITCHEN.camera.start[1], z: KITCHEN.camera.start[2] });
+  lights!: KitchenLights;
+  /** Spawn order, for the live-item cap. */
+  private spawnOrder: number[] = [];
   readonly input: PointerRouter;
   readonly grab: GrabInteraction;
   readonly audio: Audio;
@@ -47,7 +53,7 @@ export class Game {
     bindTimeScaleKeys(this.loop);
     bindResize(container, this.renderer, this.camera);
     this.input = new PointerRouter(this.renderer.domElement, this.camera, this.rig);
-    this.grab = new GrabInteraction(this.physics, this.events, { minZ: -0.25, maxZ: 0.35, minY: 0.02 });
+    this.grab = new GrabInteraction(this.physics, this.events, { minZ: KITCHEN.holdDepth[0], maxZ: KITCHEN.holdDepth[1], minY: 0.02 });
     this.input.addPicker(this.grab.picker);
     this.audio = new Audio(this.events);
     this.buildScene();
@@ -57,53 +63,29 @@ export class Game {
     const item = spawnItem(this.physics, this.scene, itemDef(id), pos, rot);
     this.items.set(item.entry.body.handle, item);
     this.grab.pickables.push(item.view);
+    this.spawnOrder.push(item.entry.body.handle);
+    this.enforceItemCap();
     this.events.emit('spawn', { body: item.entry.body.handle, itemId: id });
     return item;
   }
 
   private buildScene(): void {
+    const L = KITCHEN;
     this.scene.background = new THREE.Color(0x2a221c);
+    this.scene.fog = new THREE.Fog(0x2a221c, 4, 9);
+    this.lights = new KitchenLights(this.scene, this.renderer);
+    buildKitchenColliders(this.physics, L);
+    buildKitchenVisuals(this.scene, L);
+    this.grab.spawnerDisplays.push(...buildSpawnerDisplays(this.scene, L.spawners));
+    this.grab.spawn = (slot) => this.spawn(slot.itemId, spawnPosition(slot)).entry.body.handle;
+    for (const it of L.startItems) this.spawn(it.itemId, { x: it.pos[0], y: it.pos[1], z: it.pos[2] });
     this.rig.applyTo(this.camera);
+  }
 
-    this.scene.add(new THREE.HemisphereLight(0xfff1dd, 0x3a2c22, 0.6));
-    const sun = new THREE.DirectionalLight(0xffe2bf, 2.2);
-    sun.position.set(1.5, 3, 2);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, { left: -3, right: 3, top: 3, bottom: -3 });
-    this.scene.add(sun);
-
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.MeshStandardMaterial({ color: 0x5b4a3c, roughness: 0.9 }));
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-    this.scene.add(floor);
-    this.physics.add(RAPIER.RigidBodyDesc.fixed(), [RAPIER.ColliderDesc.cuboid(10, 0.05, 10).setTranslation(0, -0.05, 0)], { tag: 'floor' });
-
-    // Temporary test counter (replaced by the kitchen in Prompt 3).
-    const counter = new THREE.Mesh(new THREE.BoxGeometry(6, 0.9, 0.65), new THREE.MeshStandardMaterial({ color: 0xd9d4cc, roughness: 0.4 }));
-    counter.position.set(0, 0.45, 0);
-    counter.receiveShadow = true;
-    counter.castShadow = true;
-    this.scene.add(counter);
-    this.physics.add(RAPIER.RigidBodyDesc.fixed(), [RAPIER.ColliderDesc.cuboid(3, 0.45, 0.325).setTranslation(0, 0.45, 0).setFriction(0.55)], {
-      tag: 'counter',
-      material: 'granite',
-    });
-
-    const y = 0.95;
-    this.spawn('cutting-board', { x: -0.1, y, z: 0 });
-    this.spawn('steak', { x: -0.15, y: y + 0.05, z: 0 });
-    this.spawn('potato', { x: 0.1, y: y + 0.06, z: 0.05 });
-    this.spawn('herbs', { x: 0.35, y, z: 0.05 });
-    this.spawn('cast-iron-pan', { x: 0.75, y, z: 0 });
-    this.spawn('stainless-pan', { x: -0.8, y, z: 0 });
-    this.spawn('stock-pot', { x: 1.4, y, z: -0.05 });
-    this.spawn('chef-knife', { x: -0.1, y: y + 0.03, z: 0.2 });
-    this.spawn('flour-bag', { x: -1.4, y: y + 0.12, z: -0.1 });
-    this.spawn('egg', { x: 0.3, y: y + 0.03, z: 0.22 });
-    this.spawn('carrot', { x: -0.45, y: y + 0.02, z: 0.2 });
-    this.spawn('onion', { x: 0.5, y: y + 0.05, z: 0.18 });
-    this.spawn('chicken-breast', { x: -1.0, y: y + 0.03, z: 0.18 });
+  /** Station the camera is centered on. */
+  get station(): string {
+    const x = this.rig.x;
+    return KITCHEN.stations.find((s) => x >= s.x0 && x < s.x1)?.name ?? '';
   }
 
   start(): void {
@@ -116,6 +98,25 @@ export class Game {
     this.last = performance.now();
     requestAnimationFrame(frame);
     this.ready = true;
+  }
+
+  despawn(handle: number): void {
+    const it = this.items.get(handle);
+    if (!it) return;
+    if (this.grab.heldHandle === handle) this.grab.end();
+    despawnItem(this.physics, this.scene, handle);
+    this.items.delete(handle);
+    const i = this.grab.pickables.indexOf(it.view);
+    if (i >= 0) this.grab.pickables.splice(i, 1);
+    this.spawnOrder = this.spawnOrder.filter((h) => h !== handle);
+  }
+
+  private enforceItemCap(): void {
+    while (this.items.size > MAX_LIVE_ITEMS) {
+      const oldest = this.spawnOrder.find((h) => h !== this.grab.heldHandle);
+      if (oldest === undefined) return;
+      this.despawn(oldest);
+    }
   }
 
   private edgePan(dt: number): void {
@@ -139,6 +140,7 @@ export class Game {
     this.rig.update(dt);
     this.edgePan(dt);
     this.rig.applyTo(this.camera);
+    this.lights.follow(this.rig.x);
     this.loop.tick(realDt);
     this.physics.sync();
     this.renderer.render(this.scene, this.camera);
@@ -149,6 +151,7 @@ export class Game {
       cameraY: this.camera.position.y,
       timeScale: this.loop.timeScale,
       gameTime: this.sim.gameTime,
+      station: this.station,
       held: held ? `${held.def.name}${this.grab.grab.saturated ? ' (heavy!)' : ''}` : undefined,
     });
   }

@@ -17,7 +17,7 @@ export const PAN_SIGN = 1;
 /** Inertia decay rate (1/s). exp(−5/60) ≈ 0.92 per 60 Hz frame. */
 export const INERTIA_DECAY = 5;
 /** Fixed downward pitch (radians) so the counter top is in view. */
-export const PITCH = -0.26;
+export const PITCH = -0.45;
 /** Below this speed (m/s) inertia stops. */
 const REST_SPEED = 0.005;
 /** Focus glide stiffness (critically damped). */

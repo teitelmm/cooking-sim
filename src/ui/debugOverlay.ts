@@ -5,6 +5,7 @@ export interface DebugStats {
   timeScale: number;
   gameTime: number;
   held?: string;
+  station?: string;
 }
 
 export class DebugOverlay {
@@ -32,6 +33,7 @@ export class DebugOverlay {
       `bodies  ${stats.bodies}\n` +
       `camera  x ${stats.cameraX.toFixed(2)}  y ${stats.cameraY.toFixed(2)}\n` +
       `time    ${stats.timeScale}x  ${mins}:${secs}\n` +
+      `station ${stats.station ?? '-'}\n` +
       `held    ${stats.held ?? '-'}`;
   }
 }

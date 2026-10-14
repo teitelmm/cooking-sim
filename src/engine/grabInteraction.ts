@@ -3,6 +3,8 @@ import { GrabController } from './grab';
 import type { Interaction, Picker, PointerInfo } from './input';
 import type { PhysicsWorld } from './physics';
 import type { EventBus } from './events';
+import { spawnerOf } from '../world/spawners';
+import type { SpawnerSlot } from '../world/kitchenLayout';
 
 /** Lift applied once the item starts moving, so it clears the surface it was resting on. */
 export const LIFT_HEIGHT = 0.08;
@@ -31,6 +33,9 @@ export function bodyHandleOf(obj: THREE.Object3D | null): number | undefined {
 export class GrabInteraction {
   readonly grab = new GrabController();
   readonly pickables: THREE.Object3D[] = [];
+  /** Supply displays; pressing one calls `spawn` and hands you the new item. */
+  readonly spawnerDisplays: THREE.Object3D[] = [];
+  spawn: ((slot: SpawnerSlot) => number) | null = null;
   heldHandle: number | null = null;
   private depth = 0;
   private startPoint = new THREE.Vector3();
@@ -55,8 +60,13 @@ export class GrabInteraction {
 
   readonly picker: Picker = (p) => {
     this.raycaster.ray.copy(p.ray);
-    const hits = this.raycaster.intersectObjects(this.pickables, true);
+    const hits = this.raycaster.intersectObjects([...this.pickables, ...this.spawnerDisplays], true);
     for (const h of hits) {
+      const slot = spawnerOf(h.object);
+      if (slot) {
+        if (!this.spawn) continue;
+        return this.start(this.spawn(slot), h.point, p);
+      }
       const handle = bodyHandleOf(h.object);
       if (handle === undefined) continue;
       const entry = this.physics.entries.get(handle);

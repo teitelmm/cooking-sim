@@ -31,6 +31,41 @@ function panParts(radius: number, wall: number, baseT: number, handleColor: numb
   ];
 }
 
+/** Open rectangular tray/basket: floor + 4 walls (+ optional handle on +Z). */
+function trayParts(w: number, d: number, h: number, t: number, handle?: { len: number; color?: number }): ShapePart[] {
+  const parts: ShapePart[] = [
+    { kind: 'box', size: [w, t, d], offset: [0, t / 2, 0] },
+    { kind: 'box', size: [t, h, d], offset: [-w / 2 + t / 2, h / 2, 0] },
+    { kind: 'box', size: [t, h, d], offset: [w / 2 - t / 2, h / 2, 0] },
+    { kind: 'box', size: [w - 2 * t, h, t], offset: [0, h / 2, -d / 2 + t / 2] },
+    { kind: 'box', size: [w - 2 * t, h, t], offset: [0, h / 2, d / 2 - t / 2] },
+  ];
+  if (handle) parts.push({ kind: 'box', size: [0.04, 0.02, handle.len], offset: [0, h * 0.7, d / 2 + handle.len / 2], color: handle.color, handle: true });
+  return parts;
+}
+
+/** Round bowl: base disc + ring wall. */
+function bowlParts(radius: number, height: number): ShapePart[] {
+  return [
+    { kind: 'cylinder', radius: radius * 0.7, height: 0.008, offset: [0, 0.004, 0] },
+    { kind: 'ring', radius: radius * 0.85, height: height, thickness: 0.006, segments: 14, offset: [0, height / 2, 0] },
+  ];
+}
+
+function shaker(id: string, name: string, color: number, capColor: number): ItemDef {
+  return {
+    id,
+    name,
+    category: 'pantry',
+    mass: 0.15,
+    material: 'glass',
+    parts: [
+      { kind: 'cylinder', radius: 0.022, height: 0.08, offset: [0, 0.04, 0], color },
+      { kind: 'cylinder', radius: 0.023, height: 0.015, offset: [0, 0.0875, 0], color: capColor },
+    ],
+  };
+}
+
 export const ITEMS: ItemDef[] = [
   {
     id: 'steak',
@@ -155,6 +190,198 @@ export const ITEMS: ItemDef[] = [
     parts: [
       { kind: 'box', size: [0.2, 0.003, 0.045], offset: [0.1, 0, 0] },
       { kind: 'box', size: [0.12, 0.02, 0.024], offset: [-0.06, 0.004, 0.006], color: 0x2a1d14, handle: true },
+    ],
+    angularDamping: 1.5,
+  },
+  {
+    id: 'ribs',
+    name: 'Pork spare ribs (half rack)',
+    category: 'protein',
+    mass: 1.1,
+    material: 'meat',
+    parts: [{ kind: 'box', size: [0.3, 0.04, 0.14], round: 0.012 }],
+    color: 0xc06a68,
+    angularDamping: 0.8,
+  },
+  {
+    id: 'butter',
+    name: 'Butter (stick)',
+    category: 'pantry',
+    mass: 0.113,
+    material: 'paper',
+    parts: [{ kind: 'box', size: [0.12, 0.032, 0.032], round: 0.003 }],
+    color: 0xf7e6a6,
+  },
+  {
+    id: 'milk',
+    name: 'Milk (1 qt)',
+    category: 'pantry',
+    mass: 1.0,
+    material: 'paper',
+    parts: [{ kind: 'box', size: [0.07, 0.19, 0.07], round: 0.004, offset: [0, 0.095, 0] }],
+    color: 0xf4f6f8,
+  },
+  {
+    id: 'sugar-bag',
+    name: 'Sugar (4 lb)',
+    category: 'pantry',
+    mass: 1.8,
+    material: 'paper',
+    parts: [{ kind: 'box', size: [0.13, 0.18, 0.08], round: 0.01, offset: [0, 0.09, 0] }],
+    color: 0xd8e4ef,
+  },
+  {
+    id: 'pasta-box',
+    name: 'Spaghetti (1 lb)',
+    category: 'pantry',
+    mass: 0.45,
+    material: 'paper',
+    parts: [{ kind: 'box', size: [0.26, 0.04, 0.06], offset: [0, 0.02, 0] }],
+    color: 0x2f5fa8,
+  },
+  {
+    id: 'oil-bottle',
+    name: 'Vegetable oil',
+    category: 'pantry',
+    mass: 0.9,
+    material: 'plastic',
+    parts: [
+      { kind: 'cylinder', radius: 0.035, height: 0.2, offset: [0, 0.1, 0], color: 0xe8c25a },
+      { kind: 'cylinder', radius: 0.013, height: 0.04, offset: [0, 0.22, 0], color: 0xd23a2a },
+    ],
+  },
+  shaker('salt-shaker', 'Salt', 0xf4f4f4, 0xb8bcc0),
+  shaker('pepper-shaker', 'Black pepper', 0x3a3430, 0xb8bcc0),
+  shaker('paprika-shaker', 'Paprika', 0xb8331c, 0xb8bcc0),
+  {
+    id: 'bell-pepper',
+    name: 'Bell pepper',
+    category: 'produce',
+    mass: 0.17,
+    material: 'produce',
+    parts: [{ kind: 'sphere', radius: 0.04, scale: [1, 1.1, 1], offset: [0, 0.044, 0] }],
+    color: 0xd52a1e,
+  },
+  {
+    id: 'broccoli',
+    name: 'Broccoli',
+    category: 'produce',
+    mass: 0.15,
+    material: 'leafy',
+    parts: [
+      { kind: 'sphere', radius: 0.045, scale: [1, 0.75, 1], offset: [0, 0.07, 0] },
+      { kind: 'cylinder', radius: 0.014, height: 0.06, offset: [0, 0.03, 0], color: 0x8fb36a },
+    ],
+    color: 0x2f6b2a,
+  },
+  {
+    id: 'mushroom',
+    name: 'Cremini mushroom',
+    category: 'produce',
+    mass: 0.02,
+    material: 'produce',
+    parts: [
+      { kind: 'sphere', radius: 0.022, scale: [1, 0.6, 1], offset: [0, 0.022, 0] },
+      { kind: 'cylinder', radius: 0.008, height: 0.018, offset: [0, 0.009, 0], color: 0xe7dccb },
+    ],
+    color: 0x8a6748,
+  },
+  {
+    id: 'garlic',
+    name: 'Garlic bulb',
+    category: 'produce',
+    mass: 0.05,
+    material: 'produce',
+    parts: [{ kind: 'sphere', radius: 0.025, scale: [1, 0.85, 1], offset: [0, 0.021, 0] }],
+    color: 0xf1eadb,
+  },
+  {
+    id: 'mixing-bowl',
+    name: 'Mixing bowl',
+    category: 'cookware',
+    mass: 0.6,
+    material: 'steel',
+    parts: bowlParts(0.12, 0.1),
+  },
+  {
+    id: 'colander',
+    name: 'Colander',
+    category: 'cookware',
+    mass: 0.4,
+    material: 'steel',
+    parts: bowlParts(0.12, 0.09),
+    color: 0xd8dadc,
+  },
+  {
+    id: 'plate',
+    name: 'Dinner plate',
+    category: 'dish',
+    mass: 0.5,
+    material: 'ceramic',
+    parts: [
+      { kind: 'cylinder', radius: 0.11, height: 0.01, offset: [0, 0.005, 0] },
+      { kind: 'ring', radius: 0.125, height: 0.018, thickness: 0.012, segments: 16, offset: [0, 0.012, 0] },
+    ],
+  },
+  {
+    id: 'sheet-pan',
+    name: 'Sheet pan',
+    category: 'cookware',
+    mass: 1.0,
+    material: 'steel',
+    parts: trayParts(0.4, 0.27, 0.022, 0.004),
+    color: 0xb9bcbf,
+  },
+  {
+    id: 'fry-basket',
+    name: 'Fry basket',
+    category: 'cookware',
+    mass: 0.5,
+    material: 'steel',
+    parts: trayParts(0.24, 0.22, 0.12, 0.004, { len: 0.22, color: 0x1a1a1a }),
+    color: 0xc9ccd0,
+  },
+  {
+    id: 'air-fryer-basket',
+    name: 'Air-fryer basket',
+    category: 'cookware',
+    mass: 0.7,
+    material: 'plastic',
+    parts: trayParts(0.26, 0.26, 0.13, 0.006, { len: 0.1, color: 0x111111 }),
+    color: 0x2a2a2e,
+  },
+  {
+    id: 'vacuum-bag',
+    name: 'Vacuum bag',
+    category: 'tool',
+    mass: 0.01,
+    material: 'plastic',
+    parts: [{ kind: 'box', size: [0.24, 0.004, 0.18] }],
+    color: 0xdfe8ec,
+    angularDamping: 2,
+    linearDamping: 1,
+  },
+  {
+    id: 'probe-thermometer',
+    name: 'Probe thermometer',
+    category: 'tool',
+    mass: 0.06,
+    material: 'steel',
+    parts: [
+      { kind: 'box', size: [0.13, 0.005, 0.005], offset: [0.065, 0.0125, 0] },
+      { kind: 'box', size: [0.06, 0.025, 0.035], offset: [-0.03, 0.0125, 0], color: 0xe0b324, handle: true },
+    ],
+    angularDamping: 1.5,
+  },
+  {
+    id: 'tongs',
+    name: 'Tongs',
+    category: 'tool',
+    mass: 0.12,
+    material: 'steel',
+    parts: [
+      { kind: 'box', size: [0.24, 0.01, 0.026], offset: [0, 0.005, 0] },
+      { kind: 'box', size: [0.08, 0.016, 0.03], offset: [-0.09, 0.008, 0], color: 0x222222, handle: true },
     ],
     angularDamping: 1.5,
   },
