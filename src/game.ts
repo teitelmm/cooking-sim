@@ -11,6 +11,9 @@ import { PointerRouter } from './engine/input';
 import { GrabInteraction } from './engine/grabInteraction';
 import { Audio } from './engine/audio';
 import { itemDef } from './data/items';
+import { FOODS } from './data/foods';
+import { FoodItem } from './sim/food';
+import { partsBounds } from './world/shapes';
 import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
 import { KITCHEN } from './world/kitchenLayout';
 import { buildKitchenColliders, buildKitchenVisuals, KitchenLights } from './world/kitchenBuilder';
@@ -64,6 +67,12 @@ export class Game {
     this.items.set(item.entry.body.handle, item);
     this.grab.pickables.push(item.view);
     this.spawnOrder.push(item.entry.body.handle);
+    if (FOODS[id]) {
+      const b = partsBounds(item.def.parts);
+      const food = new FoodItem(id, [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z]);
+      this.sim.addFood(item.entry.body.handle, food);
+      item.entry.data.food = food;
+    }
     this.enforceItemCap();
     this.events.emit('spawn', { body: item.entry.body.handle, itemId: id });
     return item;
@@ -105,6 +114,7 @@ export class Game {
     if (!it) return;
     if (this.grab.heldHandle === handle) this.grab.end();
     despawnItem(this.physics, this.scene, handle);
+    this.sim.removeFood(handle);
     this.items.delete(handle);
     const i = this.grab.pickables.indexOf(it.view);
     if (i >= 0) this.grab.pickables.splice(i, 1);
