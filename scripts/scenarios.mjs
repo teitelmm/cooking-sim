@@ -43,3 +43,28 @@ scenarios.pan = async ({ page, shot, game, wait, assert }) => {
   const same = s0.q.every((v, i) => Math.abs(v - s2.q[i]) < 1e-9);
   assert(same, 'camera orientation unchanged');
 };
+
+scenarios.grab = async ({ page, shot, game, wait, assert }) => {
+  await wait(1500);
+  const s = await game(() => window.__game.screenOf('steak'));
+  assert(s, 'steak on screen');
+  const p0 = await game((h) => window.__game.bodyPos(h), s.handle);
+  // Pick up the steak and carry it right and up; screenshot mid-drag.
+  await page.mouse.move(s.x, s.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 25; i++) {
+    await page.mouse.move(s.x + i * 10, s.y - i * 6);
+    await wait(16);
+  }
+  await wait(400);
+  const held = await game(() => window.__game.grab.heldHandle);
+  const p1 = await game((h) => window.__game.bodyPos(h), s.handle);
+  await shot('grab');
+  await page.mouse.up();
+  await wait(1500);
+  const p2 = await game((h) => window.__game.bodyPos(h), s.handle);
+  assert(held === s.handle, 'steak is held');
+  assert(p1.x > p0.x + 0.1 && p1.y > p0.y + 0.05, `steak moved while held (${JSON.stringify(p0)} → ${JSON.stringify(p1)})`);
+  assert(p2.y < p1.y, 'steak falls after release');
+  await shot('grab-released');
+};

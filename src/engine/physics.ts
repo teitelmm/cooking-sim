@@ -35,6 +35,8 @@ export class PhysicsWorld {
   readonly entries = new Map<number, BodyEntry>();
   private readonly queue: RAPIER.EventQueue;
   private readonly colliderBody = new Map<number, number>();
+  /** Called before every world.step (hand forces, buoyancy, etc.). */
+  readonly preStep: ((dt: number) => void)[] = [];
 
   constructor(private readonly events?: EventBus) {
     this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
@@ -83,6 +85,7 @@ export class PhysicsWorld {
   }
 
   step(): void {
+    for (const f of this.preStep) f(PHYSICS_DT);
     this.world.step(this.queue);
     if (!this.events) return;
     this.queue.drainContactForceEvents((ev) => {

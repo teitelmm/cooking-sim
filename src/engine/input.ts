@@ -18,6 +18,8 @@ export interface Interaction {
   end(p: PointerInfo): void;
   /** Mouse wheel / two-finger gestures while this interaction is active. */
   rotate?(dYaw: number, dPitch: number): void;
+  /** Move the interaction nearer (+) / farther (−) from the camera. */
+  push?(dz: number): void;
 }
 
 export type Picker = (p: PointerInfo) => Interaction | null;
@@ -142,6 +144,10 @@ export class PointerRouter {
   private onWheel(e: WheelEvent): void {
     e.preventDefault();
     const d = Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 120) / 120;
+    if (this.active && (e.altKey || e.ctrlKey) && this.active.push) {
+      this.active.push(d * 0.04);
+      return;
+    }
     if (this.active?.rotate) {
       if (e.shiftKey) this.active.rotate(0, d * 0.35);
       else this.active.rotate(d * 0.35, 0);
@@ -174,6 +180,7 @@ export class PointerRouter {
       if (dAng < -Math.PI) dAng += 2 * Math.PI;
       // Twist = spin about view axis; two-finger vertical drag = flip about X.
       this.active.rotate(-dAng, (s.midY - this.pinchMidY) * 0.01);
+      this.active.push?.((s.dist - this.pinchDist) * 0.001);
     } else {
       this.rig.dolly(-(s.dist - this.pinchDist) * 0.002);
     }
