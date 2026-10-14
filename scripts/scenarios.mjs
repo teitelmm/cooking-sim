@@ -458,7 +458,7 @@ scenarios.autocutter = async ({ page, shot, game, wait, assert }) => {
     };
     const pull = (modeIndex) => {
       ac.modeIndex = modeIndex;
-      const p = g.spawn('potato', { x: ac.z.pos[0], y: 1.09, z: ac.z.pos[2] + 0.01 });
+      g.spawn('potato', { x: ac.z.pos[0], y: 1.09, z: ac.z.pos[2] + 0.01 });
       run(60);
       ac.lever = 1;
       ac.frame();
@@ -481,4 +481,104 @@ scenarios.autocutter = async ({ page, shot, game, wait, assert }) => {
   assert(r.wedges === 8, 'wedges mode makes 8 wedges');
   await wait(1500);
   await shot('auto-cutter');
+};
+
+scenarios.pasta = async ({ page, shot, game, wait, assert }) => {
+  const r = await game(() => {
+    const g = window.__game;
+    const run = (n, frameDt = 1 / 30) => {
+      for (let i = 0; i < n; i++) {
+        for (let k = 0; k < 4; k++) g.physics.step();
+        g.liquids.frame(frameDt, []);
+        g.pantry.frame(frameDt);
+      }
+      g.physics.sync();
+    };
+    const potH = [...g.items].find(([, it]) => it.def.id === 'stock-pot')[0];
+    const c = g.liquids.contentsOf(potH);
+    c.add('water', 3.0, 20);
+    g.appliances.burners[1].knob = 1;
+    let t = 0;
+    while (c.vigor < 0.6 && t < 2400) {
+      g.fastForward(10);
+      t += 10;
+    }
+    // Salt the water, then tip the spaghetti box in.
+    const pot = g.bodyPos(potH);
+    for (let i = 0; i < 30; i++) g.pantry.emitGrain({ x: pot.x, y: pot.y + 0.3, z: pot.z, clone() { return { ...this, add(o) { this.x += o.x; this.y += o.y; this.z += o.z; return this; } }; } }, { x: 0, y: 0, z: 0, clone() { return { x: 0, y: 0, z: 0, add(o) { this.x += o.x; this.y += o.y; this.z += o.z; return this; } }; } }, 'salt', 0xffffff);
+    const box = g.spawn('pasta-box', { x: pot.x, y: pot.y + 0.32, z: pot.z });
+    box.entry.body.setGravityScale(0, true);
+    box.entry.body.setRotation({ x: 0, y: 0, z: -0.6, w: 0.8 }, true); // tipped open-end down
+    run(90);
+    g.despawn(box.entry.body.handle);
+    const batch = g.pantry.pasta.get(potH);
+    const dry = batch ? batch.dryKg : 0;
+    // Cook 9 minutes, stirring every 30 s.
+    for (let s = 0; s < 18; s++) {
+      batch.stir();
+      g.fastForward(30);
+    }
+    const done = batch.doneness();
+    run(30);
+    return { boilMin: t / 60, dry, done, R: batch.R, clump: batch.clump, starch: c.starch, salted: g.pantry.salted.get(potH) ?? 0 };
+  });
+  console.log('     ' + JSON.stringify(r));
+  assert(r.dry > 0.4, 'spaghetti went into the pot');
+  assert(r.done === 'al dente', `al dente after 9 min stirred (${r.done})`);
+  assert(r.clump < 0.2, 'stirred pasta did not clump');
+  await game(() => window.__game.rig.focusOn({ x: 3.3, y: 1.45 }));
+  await settle(page);
+  await wait(1500);
+  await shot('pasta-pot');
+  // Drain into a colander in the sink.
+  const d = await game(() => {
+    const g = window.__game;
+    const potH = [...g.items].find(([, it]) => it.def.id === 'stock-pot')[0];
+    const col = g.spawn('colander', { x: 7.0, y: 0.69, z: -0.02 });
+    const pot = g.physics.entries.get(potH).body;
+    pot.setGravityScale(0, true);
+    pot.setTranslation({ x: 7.0 - 0.12, y: 0.93, z: -0.02 }, true);
+    pot.setRotation({ x: 0, y: 0, z: -0.643, w: 0.766 }, true); // ~80° tilt toward the colander
+    for (let i = 0; i < 150; i++) {
+      pot.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      pot.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      for (let k = 0; k < 4; k++) g.physics.step();
+      g.liquids.frame(1 / 30, []);
+      g.pantry.frame(1 / 30);
+    }
+    g.physics.sync();
+    const inCol = g.pantry.pasta.get(col.entry.body.handle);
+    return { colanderPasta: inCol ? inCol.dryKg : 0, waterLeft: g.liquids.contentsOf(potH).water };
+  });
+  console.log('     ' + JSON.stringify(d));
+  assert(d.colanderPasta > 0.3, 'pasta drained into the colander');
+  assert(d.waterLeft < 1.5, 'water poured out');
+  await game(() => window.__game.rig.focusOn({ x: 7.0, y: 1.42 }));
+  await settle(page);
+  await wait(1500);
+  await shot('pasta-drain');
+};
+
+scenarios.spices = async ({ game, assert }) => {
+  const r = await game(() => {
+    const g = window.__game;
+    const steak = [...g.items].find(([, it]) => it.def.id === 'steak');
+    const sh = steak[0];
+    for (let i = 0; i < 60; i++) g.physics.step();
+    const p = g.bodyPos(sh);
+    const shaker = g.spawn('pepper-shaker', { x: p.x, y: p.y + 0.25, z: p.z });
+    const b = shaker.entry.body;
+    b.setGravityScale(0, true);
+    b.setRotation({ x: 1, y: 0, z: 0, w: 0 }, true); // upside down
+    g.grab.heldHandle = b.handle;
+    for (let i = 0; i < 60; i++) {
+      b.setLinvel({ x: 0, y: i % 2 ? 0.6 : -0.6, z: 0 }, true); // shake up and down
+      g.pantry.frame(1 / 30);
+    }
+    for (let i = 0; i < 60; i++) g.pantry.frame(1 / 30);
+    g.grab.heldHandle = null;
+    return g.pantry.flavorsOf(sh);
+  });
+  console.log('     ' + JSON.stringify(r));
+  assert((r.pepper ?? 0) > 0.0002, 'shaking pepper over the steak seasons it');
 };

@@ -29,6 +29,7 @@ import { LiquidSystem } from './world/liquids';
 import { ProbeSystem } from './world/probe';
 import { KnifeSystem } from './world/knife';
 import { AutoCutter } from './world/autoCutter';
+import { PantryActions } from './world/pantryActions';
 import { partVolume } from './world/shapes';
 import { zone } from './world/kitchenAppliances';
 import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
@@ -66,6 +67,7 @@ export class Game {
   readonly probes: ProbeSystem;
   readonly knife: KnifeSystem;
   readonly autoCutter: AutoCutter;
+  readonly pantry: PantryActions;
   private bagTimers = new Map<number, number>();
   private lastGameTime = 0;
   ready = false;
@@ -111,7 +113,16 @@ export class Game {
     this.probes = new ProbeSystem(this);
     this.knife = new KnifeSystem(this);
     this.autoCutter = new AutoCutter(this);
-    this.liquids.onSplash = (at, kg, kind) => this.juice.puddle(at, kg, kind === 'oil' ? [0.85, 0.65, 0.2] : [0.7, 0.8, 0.88], kind === 'oil' ? 920 : 1000);
+    this.pantry = new PantryActions(this);
+    this.liquids.onSplash = (at, kg, kind) => at.y > 0.5 && this.juice.puddle(at, kg, kind === 'oil' ? [0.85, 0.65, 0.2] : [0.7, 0.8, 0.88], kind === 'oil' ? 920 : 1000);
+    this.heat.steamAt = (p) => {
+      for (const k of this.liquids.all) {
+        if (!k.c.lid || k.c.water < 0.05 || k.c.vigor < 0.1) continue;
+        const t = this.physics.entries.get(k.handle)?.body.translation();
+        if (t && this.liquids.holds(k, p) && p.y >= t.y + Math.min(k.c.level, k.pan.spec.depth!)) return k.c;
+      }
+      return null;
+    };
     this.heat.liquidAt = (p) => {
       for (const k of this.liquids.all) {
         if (k.c.kg < 0.01 || k.pan.id === 'oil-bottle') continue;
@@ -172,6 +183,7 @@ export class Game {
       this.liquids.track(h, ck);
       if (def.id === 'oil-bottle') ck.contents.add('oil', 0.85);
     }
+    if (def.id === 'pasta-box') item.entry.data.pastaKg = 0.45;
     this.events.emit('spawn', { body: h, itemId: def.id });
     this.enforceItemCap();
     return item;
@@ -342,6 +354,7 @@ export class Game {
     this.liquids.frame(dt, lids);
     this.probes.frame();
     this.autoCutter.frame();
+    this.pantry.frame(dt);
     this.renderer.render(this.scene, this.camera);
     const held = this.grab.heldHandle !== null ? this.items.get(this.grab.heldHandle) : undefined;
     this.overlay.update(realDt, {

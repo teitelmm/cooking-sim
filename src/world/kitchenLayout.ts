@@ -236,6 +236,15 @@ counter(1.4, 2.8);
   box(ac.x0, ac.x1, ac.floor, ac.top, ac.z1 - 0.008, ac.z1, 'steel', { color: 0xb8bcc0, tag: 'cutter-front' });
   zones.push({ id: 'auto-cutter', kind: 'autoCutter', pos: [(ac.x0 + ac.x1) / 2, (ac.floor + ac.top) / 2 + 0.01, (ac.z0 + ac.z1) / 2 - 0.02], size: [ac.x1 - ac.x0, ac.top - ac.floor, ac.z1 + 0.095] });
 
+  // Spice rack above the prep counter.
+  box(1.78, 2.2, 1.25, 1.265, WALL_Z, WALL_Z + 0.11, 'wood', { surface: 'all', tag: 'spice-rack', color: 0x8a6142 });
+  spawners.push({ itemId: 'garlic-powder', pos: [1.83, 1.265, -0.295], label: 'Garlic powder' });
+  spawners.push({ itemId: 'chili-flakes', pos: [1.9, 1.265, -0.295], label: 'Chili flakes' });
+  spawners.push({ itemId: 'dried-herbs', pos: [1.97, 1.265, -0.295], label: 'Oregano' });
+  spawners.push({ itemId: 'salt-shaker', pos: [2.04, 1.265, -0.295], label: 'Salt' });
+  spawners.push({ itemId: 'pepper-shaker', pos: [2.11, 1.265, -0.295], label: 'Pepper' });
+  spawners.push({ itemId: 'wooden-spoon', pos: [2.4, COUNTER_TOP, -0.18], label: 'Wooden spoon' });
+
   // Pot rack shelf above (cookware spawners).
   box(1.45, 2.75, 1.58, 1.6, WALL_Z, WALL_Z + 0.32, 'steel', { surface: 'all', tag: 'pot-shelf', color: 0x8d9296 });
   spawners.push({ itemId: 'cast-iron-pan', pos: [1.65, 1.6, -0.19], label: 'Cast-iron skillet' });

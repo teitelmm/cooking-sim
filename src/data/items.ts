@@ -365,6 +365,22 @@ export const ITEMS: ItemDef[] = [
   shaker('salt-shaker', 'Salt', 0xf4f4f4, 0xb8bcc0),
   shaker('pepper-shaker', 'Black pepper', 0x3a3430, 0xb8bcc0),
   shaker('paprika-shaker', 'Paprika', 0xb8331c, 0xb8bcc0),
+  shaker('garlic-powder', 'Garlic powder', 0xe8dcc0, 0x7a5a3a),
+  shaker('chili-flakes', 'Chili flakes', 0xc0391b, 0x7a5a3a),
+  shaker('dried-herbs', 'Dried oregano', 0x6b7a3a, 0x7a5a3a),
+  {
+    id: 'wooden-spoon',
+    name: 'Wooden spoon',
+    category: 'tool',
+    mass: 0.05,
+    material: 'wood',
+    parts: [
+      { kind: 'box', size: [0.2, 0.008, 0.016], offset: [-0.04, 0.004, 0], handle: true },
+      { kind: 'sphere', radius: 0.022, scale: [1.3, 0.35, 1], offset: [0.08, 0.006, 0] },
+    ],
+    color: 0xc79a66,
+    angularDamping: 1.5,
+  },
   {
     id: 'bell-pepper',
     name: 'Bell pepper',

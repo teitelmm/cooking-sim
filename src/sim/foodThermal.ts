@@ -198,6 +198,8 @@ export class FoodThermal {
   readonly saltAge: Float32Array;
   readonly spice: Float32Array;
   readonly spiceBurn: Float32Array;
+  /** Burn sensitivity of the spices on this food (1 = black pepper, 2 = garlic powder). */
+  spiceSens = 1;
   /** Heat drawn from the contact surface / surrounding fluid since last reset, J (for pans, oil, baths). */
   contactHeat = 0;
   fluidHeat = 0;
@@ -328,7 +330,8 @@ export class FoodThermal {
     };
     for (let f = 0; f < this.faceCount; f++) minLayer[this.faceDir[f]] = Math.min(minLayer[this.faceDir[f]], coord(this.faceCell[f], this.faceDir[f]));
     for (let f = 0; f < this.faceCount; f++) this.faceLayer[f] = Math.min(255, coord(this.faceCell[f], this.faceDir[f]) - minLayer[this.faceDir[f]]);
-    this.crustMax = CRUST_DEPTH * props.rho * props.water;
+    // Thin slices have a thin drying layer (it dries and browns sooner); thick cuts ~1 mm.
+    this.crustMax = Math.min(CRUST_DEPTH, Math.min(...size) * 0.12) * props.rho * props.water;
     this.crust = new Float32Array(this.faceCount).fill(this.crustMax + (props.surfaceWater ?? 0.02));
     this.brown = new Float32Array(this.faceCount);
     this.charred = new Float32Array(this.faceCount);
@@ -577,7 +580,8 @@ export class FoodThermal {
         }
       }
       // Spices on a very hot face scorch (bitter, blackened pepper).
-      if (this.spice[f] > 0 && Ts > 180) this.spiceBurn[f] = Math.min(1, this.spiceBurn[f] + 0.004 * Math.exp((Ts - 205) / 12) * dt);
+      // Sensitive spices (garlic powder, paprika) scorch ~50 °F lower than black pepper.
+      if (this.spice[f] > 0 && Ts > 150) this.spiceBurn[f] = Math.min(1, this.spiceBurn[f] + 0.004 * Math.exp((Ts - 205 + 28 * (this.spiceSens - 1)) / 12) * dt);
 
       Tn[c] += (q * scale * dt) / (rc * dn * this.capRel[c]);
       this.surfT[f] = Ts;
@@ -587,8 +591,12 @@ export class FoodThermal {
 
       if (!wet || Ts > BOIL_C) {
         const dryness = wet ? 0.3 : 1;
-        this.brown[f] = Math.min(1.6, this.brown[f] + browningRate(Ts) * (props.browning ?? 1) * dryness * dt);
-        this.charred[f] = Math.min(1, this.charred[f] + charRate(Ts) * (props.char ?? 1) * dt);
+        // Maillard + sugar caramelization (onions, carrots, garlic go deep brown above ~320 °F).
+        const caramel = (props.sugar ?? 0) * (Ts > 155 ? 0.012 * Math.exp((Ts - 170) / 14) : 0);
+        this.brown[f] = Math.min(1.6, this.brown[f] + (browningRate(Ts) * (props.browning ?? 1) + caramel) * dryness * dt);
+        // Sugars burn well below meat's char point (garlic ~350 °F, onions ~365 °F).
+        const sugarShift = 35 * (props.sugar ?? 0);
+        this.charred[f] = Math.min(1, this.charred[f] + charRate(Ts + sugarShift) * (props.char ?? 1) * dt);
       }
     }
 
@@ -770,6 +778,28 @@ export class FoodThermal {
       n++;
     }
     return n ? s / n : this.mean(this.w) / this.w0;
+  }
+
+  /**
+   * Crispness 0..1 of the faces (or one direction): a dry, browned crust — for starchy foods only once the
+   * surface starch has gelatinized (raw potato goes leathery-brown, cooked potato goes crisp).
+   */
+  crispness(dir?: number): number {
+    let s = 0;
+    let n = 0;
+    for (let f = 0; f < this.faceCount; f++) {
+      if (dir !== undefined && this.faceDir[f] !== dir) continue;
+      if (this.isCut[f] && this.brown[f] < 0.05) {
+        n++;
+        continue;
+      }
+      const c = this.faceCell[f];
+      const dry = this.crust[f] < 0.25 * this.crustMax ? 1 : 0.3;
+      const gel = this.props.starch ? 0.3 + 0.7 * this.starch[c] : 1;
+      s += Math.min(this.brown[f] / 0.8, 1) * dry * gel * (1 - this.charred[f] * 0.5);
+      n++;
+    }
+    return n ? s / n : 0;
   }
 
   /** Mean of a face field over faces in direction dir (or all). */

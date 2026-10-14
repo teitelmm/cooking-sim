@@ -146,6 +146,9 @@ function piece(parent: FoodItem, n: V3, d: number): FoodItem | null {
     ct.surfT[f] = ct.T[c];
   }
   child.restTime = parent.restTime;
+  ct.spiceSens = pt.spiceSens;
+  const share = ct.mass() / Math.max(pt.mass(), 1e-9);
+  for (const [k, v] of Object.entries(parent.flavors)) child.flavors[k] = v * share;
   return child;
 }
 

@@ -43,6 +43,8 @@ export class HeatBridge {
 
   /** Liquid (in a pot/pan) a world point is submerged in, if any. Set by the game. */
   liquidAt: ((p: THREE.Vector3) => Contents | null) | null = null;
+  /** Covered pot of boiling water a point is above the water in (steaming). */
+  steamAt: ((p: THREE.Vector3) => Contents | null) | null = null;
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -171,7 +173,13 @@ export class HeatBridge {
     let contact: Contact = { kind: 'none' };
     const envs: FaceEnv[] = [];
     const liquid = this.liquidAt?.(centerW) ?? null;
-    if (liquid) {
+    const steam = liquid ? null : (this.steamAt?.(centerW) ?? null);
+    if (steam) {
+      // Steaming: condensing steam at 212 °F — fast, wet, no browning.
+      fluid = steam;
+      const env: FaceEnv = { medium: 'water', fluidT: 100, fluidH: 250 * Math.min(1, steam.vigor * 2), contactT: 100, contactH: 0, contactFrac: 0, radT: 100, radView: 0 };
+      for (let d = 0; d < 6; d++) envs.push(env);
+    } else if (liquid) {
       // In a pot of water (simmering/boiling) or a pan/pot of oil (frying).
       fluid = liquid;
       const oil = liquid.kind === 'oil';

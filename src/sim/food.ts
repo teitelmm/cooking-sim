@@ -26,8 +26,21 @@ export interface FoodSummary {
   tenderness: number;
   gelatinized: number;
   softness: number;
+  crispness: number;
+  spiceBurn: number;
+  flavors: Record<string, number>;
   safety: SafetyState;
 }
+
+/** How easily each seasoning scorches (1 = black pepper). Salt doesn't burn. */
+export const SPICE_SENSITIVITY: Record<string, number> = {
+  salt: 0,
+  pepper: 1,
+  paprika: 1.8,
+  'garlic-powder': 2,
+  'chili-flakes': 1.5,
+  'dried-herbs': 1.6,
+};
 
 /** A cookable piece of food: thermal model + interpretation (doneness, safety, juiciness). */
 export class FoodItem {
@@ -40,6 +53,8 @@ export class FoodItem {
   /** Cut planes bounding this piece, in its local frame (n·p ≤ d is inside). */
   readonly cuts: Plane[];
   readonly size: [number, number, number];
+  /** Seasonings applied, kg by kind (flavor tags for the inspector). */
+  readonly flavors: Record<string, number> = {};
 
   constructor(
     readonly id: string,
@@ -60,6 +75,26 @@ export class FoodItem {
     this.thermal.step(dt);
     const hot = this.thermal.env.some((e) => e.contactFrac > 0 || e.fluidT > 60 || e.radView > 0);
     this.restTime = hot ? 0 : this.restTime + dt;
+  }
+
+  /** Sprinkle a seasoning onto faces (default: whatever faces you pass; all if none). */
+  season(kind: string, kg: number, dirs?: number[]): void {
+    const t = this.thermal;
+    let area = 0;
+    for (let f = 0; f < t.faceCount; f++) if (!dirs || dirs.includes(t.faceDir[f])) area += t.faceArea(t.faceDir[f]);
+    if (area <= 0) return;
+    t.season(kind === 'salt' ? 'salt' : 'spice', kg / (area * t.areaScale), dirs);
+    this.flavors[kind] = (this.flavors[kind] ?? 0) + kg;
+    // Weighted burn sensitivity of everything on it.
+    let w = 0;
+    let s = 0;
+    for (const [k, v] of Object.entries(this.flavors)) {
+      const sens = SPICE_SENSITIVITY[k] ?? 1;
+      if (sens <= 0) continue;
+      w += v;
+      s += v * sens;
+    }
+    t.spiceSens = w > 0 ? s / w : 1;
   }
 
   setEnv(dir: number, env: FaceEnv): void {
@@ -105,6 +140,9 @@ export class FoodItem {
       tenderness: this.props.collagen ? 1 - t.mean(t.collagen) / this.props.collagen : 1,
       gelatinized: t.mean(t.starch),
       softness: t.mean(t.soft),
+      crispness: t.crispness(),
+      spiceBurn: t.faceMean(t.spiceBurn),
+      flavors: { ...this.flavors },
       safety: this.safety(),
     };
   }
