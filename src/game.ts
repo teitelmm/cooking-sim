@@ -32,6 +32,9 @@ import { AutoCutter } from './world/autoCutter';
 import { PantryActions } from './world/pantryActions';
 import { BakingSystem } from './world/baking';
 import { partVolume } from './world/shapes';
+import { Hud } from './ui/hud';
+import { HandTools } from './world/tools';
+import { Feedback } from './world/feedback';
 import { inZone, zone } from './world/kitchenAppliances';
 import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
 import { KITCHEN } from './world/kitchenLayout';
@@ -70,6 +73,9 @@ export class Game {
   readonly autoCutter: AutoCutter;
   readonly pantry: PantryActions;
   readonly baking: BakingSystem;
+  readonly hud: Hud;
+  readonly tools: HandTools;
+  readonly feedback: Feedback;
   private bagTimers = new Map<number, number>();
   private lastGameTime = 0;
   ready = false;
@@ -150,7 +156,11 @@ export class Game {
     };
     this.audio = new Audio(this.events);
     this.juice = new JuiceSystem(this.scene, (x, y, z) => this.floorAt(x, y, z));
+    this.hud = new Hud(this.loop);
     this.buildScene();
+    this.tools = new HandTools(this);
+    this.hud.setMitt(false);
+    this.feedback = new Feedback(this);
   }
 
   spawn(id: string, pos: { x: number; y: number; z: number }, rot?: THREE.Quaternion): SpawnedItem {
@@ -373,6 +383,9 @@ export class Game {
     this.autoCutter.frame();
     this.pantry.frame(dt);
     this.baking.frame(dt);
+    this.tools.frame(dt);
+    this.feedback.frame(dt, gdt);
+    this.hud.frame();
     this.renderer.render(this.scene, this.camera);
     const held = this.grab.heldHandle !== null ? this.items.get(this.grab.heldHandle) : undefined;
     this.overlay.update(realDt, {
@@ -492,7 +505,11 @@ export class Game {
 
   /** Run the cooking sim (appliances, cookware, food) forward by game seconds without rendering. */
   fastForward(seconds: number, dt = 0.5): void {
-    for (let t = 0; t < seconds; t += dt) this.sim.step(dt);
+    for (let t = 0; t < seconds; t += dt) {
+      this.sim.step(dt);
+      this.feedback.timer.step(dt);
+      this.feedback.smoke.step(dt, dt);
+    }
     this.lastGameTime = this.sim.gameTime - 1; // force view refresh next frame
     for (const v of this.foodViews.values()) v.update(10);
   }

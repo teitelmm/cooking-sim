@@ -485,6 +485,18 @@ export const ITEMS: ItemDef[] = [
     color: 0x9aa0a6,
   },
   {
+    id: 'spatula',
+    name: 'Fish spatula',
+    category: 'tool',
+    mass: 0.09,
+    material: 'steel',
+    parts: [
+      { kind: 'box', size: [0.09, 0.002, 0.075], offset: [0.06, 0.002, 0] },
+      { kind: 'box', size: [0.15, 0.012, 0.022], offset: [-0.06, 0.012, 0], color: 0x2a1d14, handle: true },
+    ],
+    angularDamping: 1.5,
+  },
+  {
     id: 'wooden-spoon',
     name: 'Wooden spoon',
     category: 'tool',

@@ -35,6 +35,8 @@ export class GrabController {
   body: RAPIER.RigidBody | null = null;
   readonly localAnchor = new THREE.Vector3();
   readonly target = new THREE.Vector3();
+  /** Added to the target (world): lets the anchor move on the body without the item jumping. */
+  readonly targetOffset = new THREE.Vector3();
   /** Orientation the wrist tries to hold. */
   readonly targetRot = new THREE.Quaternion();
   /** Rotation input not yet applied (radians, world axes). */
@@ -45,6 +47,8 @@ export class GrabController {
   lastTorque = 0;
   /** True when the force cap is limiting the hand this step (item feels heavy). */
   saturated = false;
+  /** Bodies jointed to the held one (food in tongs): their weight and inertia load the hand too. */
+  readonly attached: RAPIER.RigidBody[] = [];
 
   begin(body: RAPIER.RigidBody, worldPoint: { x: number; y: number; z: number }): void {
     if (this.body) this.end();
@@ -54,6 +58,8 @@ export class GrabController {
     const inv = tmpQ.set(r.x, r.y, r.z, r.w).invert();
     this.localAnchor.set(worldPoint.x - t.x, worldPoint.y - t.y, worldPoint.z - t.z).applyQuaternion(inv);
     this.target.set(worldPoint.x, worldPoint.y, worldPoint.z);
+    this.targetOffset.set(0, 0, 0);
+    this.attached.length = 0;
     this.targetRot.set(r.x, r.y, r.z, r.w);
     this.pendingSpin.set(0, 0, 0);
     this.savedAngularDamping = body.angularDamping();
@@ -68,6 +74,14 @@ export class GrabController {
   /** Queue a rotation of the held item about world axes (radians). */
   rotate(axis: { x: number; y: number; z: number }, angle: number): void {
     this.pendingSpin.addScaledVector(tmpV.set(axis.x, axis.y, axis.z).normalize(), angle);
+  }
+
+  /** Move the hand's grip point on the body (local coords) without moving the item. */
+  moveAnchor(local: { x: number; y: number; z: number }): void {
+    if (!this.body) return;
+    const before = this.anchorWorld(new THREE.Vector3());
+    this.localAnchor.set(local.x, local.y, local.z);
+    this.targetOffset.add(this.anchorWorld(new THREE.Vector3()).sub(before));
   }
 
   /** Set the held orientation directly (e.g. a knife snaps blade-down when picked up). */
@@ -89,14 +103,16 @@ export class GrabController {
       this.body = null;
       return;
     }
-    const m = b.mass();
+    const extra = this.attached.filter((a) => a.isValid());
+    const m = b.mass() + extra.reduce((s, a) => s + a.mass(), 0);
     const anchor = this.anchorWorld(new THREE.Vector3());
     const va = b.velocityAtPoint(anchor);
     const w = GRAB.OMEGA;
+    const tg = tmpV.copy(this.target).add(this.targetOffset);
     const force = new THREE.Vector3(
-      m * (w * w * (this.target.x - anchor.x) - 2 * GRAB.ZETA * w * va.x),
-      m * (w * w * (this.target.y - anchor.y) - 2 * GRAB.ZETA * w * va.y + G),
-      m * (w * w * (this.target.z - anchor.z) - 2 * GRAB.ZETA * w * va.z),
+      m * (w * w * (tg.x - anchor.x) - 2 * GRAB.ZETA * w * va.x),
+      m * (w * w * (tg.y - anchor.y) - 2 * GRAB.ZETA * w * va.y + G),
+      m * (w * w * (tg.z - anchor.z) - 2 * GRAB.ZETA * w * va.z),
     );
     const mag = force.length();
     const cap = Math.min(GRAB.GRIP_MAX, m * GRAB.ACCEL_MAX);
@@ -127,7 +143,35 @@ export class GrabController {
     const av = b.angvel();
     const ww = GRAB.WRIST_OMEGA;
     const alpha = new THREE.Vector3(ww * ww * axis.x * angle - 2 * ww * av.x, ww * ww * axis.y * angle - 2 * ww * av.y, ww * ww * axis.z * angle - 2 * ww * av.z);
-    const Iw = b.effectiveAngularInertia();
+    // Inertia of the held assembly (tool + clamped food) about its combined center of mass:
+    // Σ I_i + m_i(|r|²E − r rᵀ) (parallel-axis theorem).
+    const bodies = [b, ...extra];
+    const cm = new THREE.Vector3();
+    for (const x of bodies) {
+      const c = x.worldCom();
+      cm.addScaledVector(tmpV.set(c.x, c.y, c.z), x.mass() / m);
+    }
+    const Iw = { m11: 0, m12: 0, m13: 0, m21: 0, m22: 0, m23: 0, m31: 0, m32: 0, m33: 0 };
+    for (const x of bodies) {
+      // Read the world COM first: the inertia getter's result may live in scratch memory a later call reuses.
+      const c = x.worldCom();
+      const I0 = x.effectiveAngularInertia();
+      const I = { m11: I0.m11, m12: I0.m12, m13: I0.m13, m21: I0.m21, m22: I0.m22, m23: I0.m23, m31: I0.m31, m32: I0.m32, m33: I0.m33 };
+      const rx = c.x - cm.x;
+      const ry = c.y - cm.y;
+      const rz = c.z - cm.z;
+      const mi = bodies.length > 1 ? x.mass() : 0;
+      const r2 = rx * rx + ry * ry + rz * rz;
+      Iw.m11 += I.m11 + mi * (r2 - rx * rx);
+      Iw.m22 += I.m22 + mi * (r2 - ry * ry);
+      Iw.m33 += I.m33 + mi * (r2 - rz * rz);
+      Iw.m12 += I.m12 - mi * rx * ry;
+      Iw.m21 += I.m21 - mi * rx * ry;
+      Iw.m13 += I.m13 - mi * rx * rz;
+      Iw.m31 += I.m31 - mi * rx * rz;
+      Iw.m23 += I.m23 - mi * ry * rz;
+      Iw.m32 += I.m32 - mi * ry * rz;
+    }
     const torque = new THREE.Vector3(
       Iw.m11 * alpha.x + Iw.m12 * alpha.y + Iw.m13 * alpha.z,
       Iw.m21 * alpha.x + Iw.m22 * alpha.y + Iw.m23 * alpha.z,
@@ -135,8 +179,7 @@ export class GrabController {
     );
     // The wrist also resists gravity's twist about the grip (the weight hangs off the hand at the COM).
     // Capped with the rest, so a heavy pan held at the end of its handle still droops.
-    const com = b.worldCom();
-    const lever = new THREE.Vector3(com.x - anchor.x, com.y - anchor.y, com.z - anchor.z);
+    const lever = cm.sub(anchor);
     torque.add(lever.cross(new THREE.Vector3(0, m * G, 0)));
     const tm = torque.length();
     if (tm > GRAB.WRIST_MAX) torque.multiplyScalar(GRAB.WRIST_MAX / tm);

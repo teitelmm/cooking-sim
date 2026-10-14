@@ -244,6 +244,7 @@ counter(1.4, 2.8);
   spawners.push({ itemId: 'salt-shaker', pos: [2.04, 1.265, -0.295], label: 'Salt' });
   spawners.push({ itemId: 'pepper-shaker', pos: [2.11, 1.265, -0.295], label: 'Pepper' });
   spawners.push({ itemId: 'wooden-spoon', pos: [2.4, COUNTER_TOP, -0.18], label: 'Wooden spoon' });
+  spawners.push({ itemId: 'spatula', pos: [2.42, COUNTER_TOP, -0.08], label: 'Spatula' });
 
   // Pot rack shelf above (cookware spawners).
   box(1.45, 2.75, 1.58, 1.6, WALL_Z, WALL_Z + 0.32, 'steel', { surface: 'all', tag: 'pot-shelf', color: 0x8d9296 });

@@ -782,3 +782,289 @@ scenarios.bread = async ({ page, shot, game, wait, assert }) => {
   await wait(1500);
   await shot('bread');
 };
+
+/**
+ * End-to-end playthrough: knob up by mouse, steak into the hot pan, sear, flip with the tongs, burn your
+ * hand on the skillet, put on the mitt, sear side two, tongs it to the board, set the timer and rest,
+ * slice it with the knife (cross-section + juice), plate it and read the "how did it turn out" card.
+ * Hand motions go through the real grab/tool code (scripted targets, like a very steady hand).
+ */
+scenarios.playthrough = async ({ page, shot, game, wait, assert }) => {
+  const F = (c) => (c * 9) / 5 + 32;
+  await game(() => window.__game.rig.focusOn({ x: 3.0, y: 1.38 }));
+  await settle(page);
+  // Burner under the skillet to ~70 % by dragging its knob.
+  const knob = await game(() => window.__game.toScreen(2.92, 0.81, 0.337));
+  await mouseDrag(page, knob.x, knob.y, knob.x + 80, knob.y - 80, 12);
+  const knobVal = await game(() => window.__game.appliances.burners[2].knob);
+  assert(knobVal > 0.5 && knobVal < 0.9, `burner set to medium-high (${knobVal.toFixed(2)})`);
+  await game(() => window.__game.fastForward(360));
+
+  // Shared scripted-hand helpers, installed once on window.
+  await game(() => {
+    const g = window.__game;
+    const H = {};
+    H.run = (n) => {
+      for (let i = 0; i < n; i++) g.physics.step();
+      g.physics.sync();
+    };
+    H.find = (id) => [...g.items].filter(([, it]) => it.def.id === id).map(([h]) => h);
+    H.pt = (p) => ({ ...p, clone() {
+      return this;
+    } });
+    H.pick = (h, off = [0, 0, 0]) => {
+      const p = g.bodyPos(h);
+      const at = { x: p.x + off[0], y: p.y + off[1], z: p.z + off[2] };
+      const s = g.toScreen(at.x, at.y, at.z);
+      g.grab.start(h, H.pt(at), g.input.info(s.x, s.y));
+      return g.grab.heldHandle === h;
+    };
+    /** Glide the hand's target to (x, y, z) over n steps (2 physics steps each), ticking the tools. */
+    H.glide = (x, y, z, n = 60, until) => {
+      const a = g.grab.grab.target.clone();
+      for (let k = 1; k <= n; k++) {
+        const t = k / n;
+        g.grab.grab.setTarget({ x: a.x + (x - a.x) * t, y: a.y + (y - a.y) * t, z: a.z + (z - a.z) * t });
+        H.run(2);
+        g.tools.frame(1 / 60);
+        if (until && until()) return true;
+      }
+      return false;
+    };
+    /** Move the hand so the gripped food ends up at (x, y, z). */
+    H.carry = (food, x, y, z, n = 80) => {
+      for (let pass = 0; pass < 3; pass++) {
+        const fp = g.bodyPos(food);
+        const tg = g.grab.grab.target;
+        H.glide(tg.x + x - fp.x, tg.y + y - fp.y, tg.z + z - fp.z, pass ? 20 : n);
+        H.run(30);
+      }
+    };
+    H.drop = () => {
+      g.grab.end();
+      g.tools.frame(1 / 60);
+      H.run(120);
+    };
+    H.pan = () => [...g.heat.cookware].find(([, c]) => c.id === 'cast-iron-pan')[0];
+    H.steak = () => H.find('steak').reduce((a, b) => (g.sim.foods.get(a).thermal.mass() > g.sim.foods.get(b).thermal.mass() ? a : b));
+    /** Use the tongs: lower the tips onto the food until they clamp it. */
+    H.tongsOnto = (food) => {
+      const fp = g.bodyPos(food);
+      for (const old of H.find('tongs')) g.despawn(old);
+      // Tongs in hand, held up and to the side of the food.
+      const t = g.spawn('tongs', { x: fp.x - 0.2, y: fp.y + 0.25, z: fp.z }).entry.body.handle;
+      H.run(1);
+      H.pick(t, [-0.09, 0, 0]);
+      H.glide(fp.x - 0.29, fp.y + 0.25, fp.z, 30);
+      // Held tip-down at ~0.4 rad: the tips sit (0.19, −0.08) m from the handle.
+      const top = fp.y + g.sim.foods.get(food).size[1] / 2;
+      const ax = fp.x - 0.02 - 0.193;
+      H.glide(ax, top + 0.082 + 0.08, fp.z, 50);
+      H.run(60);
+      const got = H.glide(ax, top + 0.082 - 0.02, fp.z, 60, () => g.tools.grip?.food === food);
+      return got;
+    };
+    window.__H = H;
+  });
+
+  // A splash of oil: carry the bottle over the skillet and tip it.
+  const oiled = await game(() => {
+    const g = window.__game;
+    const H = window.__H;
+    const pan = g.bodyPos(H.pan());
+    const b = g.spawn('oil-bottle', { x: pan.x + 0.35, y: 0.95, z: pan.z }).entry.body.handle;
+    H.run(60);
+    H.pick(b, [0, 0.08, 0]);
+    H.glide(pan.x + 0.35, 1.25, pan.z, 40);
+    H.glide(pan.x + 0.12, 1.25, pan.z, 40);
+    g.grab.grab.rotate({ x: 0, y: 0, z: 1 }, 2.2); // spout swings over toward the pan (−x)
+    const c = g.liquids.contentsOf(H.pan());
+    for (let i = 0; i < 400 && c.oil < 0.012; i++) {
+      H.run(2);
+      g.liquids.frame(1 / 60, []);
+    }
+    g.grab.grab.rotate({ x: 0, y: 0, z: 1 }, -2.2);
+    for (let i = 0; i < 90; i++) {
+      H.run(2);
+      g.liquids.frame(1 / 60, []);
+    }
+    // Set it back down out of the way.
+    H.glide(pan.x + 0.45, 1.2, pan.z - 0.1, 50);
+    H.glide(pan.x + 0.45, 1.0, pan.z - 0.1, 40);
+    H.drop();
+    return { oilG: c.oil * 1000, bottle: g.bodyPos(b) };
+  });
+  console.log('     oiled: ' + JSON.stringify(oiled));
+  assert(oiled.oilG > 5, `oil poured into the skillet (${oiled.oilG.toFixed(1)} g)`);
+
+  // Steak from the board into the skillet (it's cold — bare hands are fine).
+  const placed = await game(() => {
+    const g = window.__game;
+    const H = window.__H;
+    const s = H.steak();
+    const pan = g.bodyPos(H.pan());
+    const ok = H.pick(s);
+    H.glide(g.bodyPos(s).x, 1.12, g.bodyPos(s).z, 40);
+    H.glide(pan.x, 1.12, pan.z, 90);
+    H.glide(pan.x, 0.99, pan.z, 40);
+    H.drop();
+    const p = g.bodyPos(s);
+    return { ok, dist: Math.hypot(p.x - pan.x, p.z - pan.z), y: p.y, panF: (g.heat.cookware.get(H.pan()).T * 9) / 5 + 32 };
+  });
+  console.log('     placed: ' + JSON.stringify(placed));
+  assert(placed.ok && placed.dist < 0.08, 'steak carried into the skillet');
+  assert(placed.panF > 400, `skillet preheated (${placed.panF.toFixed(0)}°F)`);
+  await wait(2500);
+  const sizzle = await game(() => window.__game.audio.levels.sizzle);
+  console.log(`     sizzle level: ${sizzle.toFixed(2)}`);
+  assert(sizzle > 0.1, 'steak sizzles in the hot pan');
+  await shot('play-1-sear');
+  await game(() => window.__game.fastForward(180));
+
+  // Grab the skillet barehanded: ouch.
+  const burn = await game(() => {
+    const g = window.__game;
+    const H = window.__H;
+    const before = g.tools.burns;
+    H.pick(H.pan(), [0.2, 0.02, 0]);
+    return { burned: g.tools.burns - before, held: g.grab.heldHandle };
+  });
+  assert(burn.burned === 1 && burn.held === null, 'grabbing the hot skillet barehanded burns and drops it');
+  await shot('play-2-ouch');
+  // Put on the mitt by tapping it on its hook.
+  const mitt = await game(() => window.__game.toScreen(2.62, 1.28, -0.32));
+  await page.mouse.click(mitt.x, mitt.y);
+  assert(await game(() => window.__game.tools.mitt), 'tapping the oven mitt puts it on');
+
+  // Flip with the tongs every 3 minutes (four sides' worth of 3 min = 12 min).
+  const flipOnce = () => game(() => {
+    const g = window.__game;
+    const H = window.__H;
+    const s = H.steak();
+    const r0 = g.physics.entries.get(s).body.rotation();
+    const gripped = H.tongsOnto(s);
+    const fp = g.bodyPos(s);
+    const pan0 = g.bodyPos(H.pan());
+    H.carry(s, pan0.x, fp.y + 0.14, pan0.z, 50);
+    g.grab.grab.rotate({ x: 1, y: 0, z: 0 }, Math.PI);
+    H.run(160);
+    H.carry(s, pan0.x, fp.y + 0.14, pan0.z, 30);
+    H.carry(s, pan0.x, fp.y + 0.075, pan0.z, 40);
+    H.drop();
+    H.run(120);
+    const r = g.physics.entries.get(s).body.rotation();
+    // World y of the steak's local up axis.
+    const upY = 1 - 2 * (r.x * r.x + r.z * r.z);
+    const pan = g.bodyPos(H.pan());
+    const p = g.bodyPos(s);
+    return { gripped, upY, upY0: 1 - 2 * (r0.x * r0.x + r0.z * r0.z), dist: Math.hypot(p.x - pan.x, p.z - pan.z) };
+  });
+  const flip = await flipOnce();
+  console.log('     flip: ' + JSON.stringify(flip));
+  assert(flip.gripped, 'tongs clamp onto the steak');
+  assert(flip.upY0 * flip.upY < -0.7, 'steak flipped over');
+  assert(flip.dist < 0.1, 'steak landed back in the skillet');
+  await shot('play-3-flipped');
+  // Thick steak: crust is set, so turn the burner down to medium-low and keep flipping while it cooks through.
+  const knob2 = await game(() => window.__game.toScreen(2.92, 0.81, 0.337));
+  await mouseDrag(page, knob2.x, knob2.y, knob2.x - 40, knob2.y + 40, 10);
+  const knobLow = await game(() => window.__game.appliances.burners[2].knob);
+  assert(knobLow < knobVal - 0.2, `burner turned down by dragging (${knobLow.toFixed(2)})`);
+  for (let i = 0; i < 2; i++) {
+    await game(() => window.__game.fastForward(180));
+    const f2 = await flipOnce();
+    assert(f2.gripped && f2.dist < 0.1, `flip ${i + 2} landed in the skillet`);
+  }
+  await game(() => window.__game.fastForward(180));
+
+  // Off the heat: tongs it to the cutting board, set the timer for 5 minutes, rest.
+  const rest = await game(() => {
+    const g = window.__game;
+    const H = window.__H;
+    g.appliances.burners[2].knob = 0;
+    const s = H.steak();
+    const food = g.sim.foods.get(s);
+    const sum = food.summary();
+    const gripped = H.tongsOnto(s);
+    H.carry(s, g.bodyPos(s).x, 1.12, g.bodyPos(s).z, 40);
+    H.carry(s, 2.0, 1.12, 0.05, 120);
+    H.carry(s, 2.0, 0.97, 0.05, 40);
+    g.grab.end();
+    g.tools.frame(1 / 60);
+    H.run(120);
+    const p = g.bodyPos(s);
+    return { gripped, x: p.x, z: p.z, browning: sum.browning.map((b) => +b.toFixed(2)), coreF: sum.coreF };
+  });
+  console.log('     to board: ' + JSON.stringify(rest));
+  assert(rest.gripped && Math.abs(rest.x - 2.0) < 0.12 && Math.abs(rest.z - 0.05) < 0.1, 'tongs carried the steak to the board');
+  assert(rest.browning[2] > 0.5 && rest.browning[3] > 0.5, 'both sides seared');
+  await game(() => window.__game.rig.focusOn({ x: 2.25, y: 1.36 }));
+  await settle(page);
+  const plus5 = await game(() => window.__game.toScreen(2.36 - 0.023, 1.315, -0.32));
+  await page.mouse.click(plus5.x, plus5.y);
+  const timer = await game(() => window.__game.feedback.timer.remaining);
+  assert(timer > 290 && timer <= 300, `kitchen timer set to 5:00 (${timer.toFixed(0)} s)`);
+  await game(() => window.__game.fastForward(305));
+  assert(await game(() => window.__game.feedback.timer.ringing), 'timer rings after the rest');
+
+  // Slice it with the knife.
+  const cut = await game(() => {
+    const g = window.__game;
+    const H = window.__H;
+    const s = H.steak();
+    const peakF = (g.sim.foods.get(s).thermal.corePeak() * 9) / 5 + 32;
+    let [k] = H.find('chef-knife');
+    if (k === undefined) k = g.spawn('chef-knife', { x: 2.3, y: 0.95, z: 0.2 }).entry.body.handle;
+    H.run(30);
+    H.pick(k);
+    const sp = g.bodyPos(s);
+    const pooled0 = g.juice.pooledMl;
+    g.grab.grab.setTarget({ x: sp.x, y: 1.08, z: sp.z + 0.105 });
+    H.run(90);
+    H.glide(sp.x, 1.08 - 0.15, sp.z + 0.105, 80);
+    H.run(60);
+    for (let i = 0; i < 60; i++) g.juice.update(1 / 30);
+    // Lift the knife clear and set it down behind the board.
+    H.glide(sp.x, 1.12, sp.z + 0.105, 40);
+    H.glide(sp.x + 0.15, 1.12, -0.15, 60);
+    H.glide(sp.x + 0.15, 0.99, -0.15, 40);
+    g.grab.end();
+    H.run(60);
+    return { pieces: H.find('steak').length, juiceMl: g.juice.pooledMl - pooled0, peakF };
+  });
+  console.log('     cut: ' + JSON.stringify(cut));
+  assert(cut.pieces === 2, 'knife sliced the steak');
+  assert(cut.juiceMl > 0, `juice ran onto the board (${cut.juiceMl.toFixed(1)} ml)`);
+  await wait(1500);
+  await shot('play-4-cross-section');
+
+  // Plate a piece and read the card.
+  const plated = await game(() => {
+    const g = window.__game;
+    const H = window.__H;
+    // A plate set out on the prep counter.
+    const pl = g.spawn('plate', { x: 2.47, y: 0.93, z: 0.14 }).entry.body.handle;
+    H.run(60);
+    const s = H.steak();
+    const s0 = g.bodyPos(s);
+    const gripped = H.tongsOnto(s);
+    H.carry(s, g.bodyPos(s).x, 1.1, g.bodyPos(s).z, 30);
+    const pp = g.bodyPos(pl);
+    H.carry(s, pp.x, 1.1, pp.z, 80);
+    const s1 = g.bodyPos(s);
+    H.carry(s, pp.x, pp.y + 0.04, pp.z, 40);
+    H.drop();
+    H.run(120);
+    const p = g.bodyPos(s);
+    return { gripped, s0, s1, pp, dist: Math.hypot(p.x - pp.x, p.z - pp.z) };
+  });
+  console.log('     plated: ' + JSON.stringify(plated));
+  await page.waitForFunction(() => document.querySelector('#hud .card')?.style.display === 'block', null, { timeout: 20_000 }).catch(() => {});
+  const card = await game(() => window.__game.hud.cardText);
+  console.log('     card: ' + card.replace(/\s+/g, ' ').slice(0, 300));
+  assert(/Doneness/.test(card) && /Char/.test(card) && /Juiciness/.test(card) && /Internal temp/.test(card), 'inspector card shows doneness, char, juiciness, internal temp');
+  assert(/rare|Medium/i.test(card), 'steak came out pink in the middle');
+  assert(!/blackened/.test(card), 'flipping regularly kept it from burning');
+  await shot('play-5-plated');
+  console.log(`     peak core ${F(((cut.peakF - 32) * 5) / 9).toFixed(0)}°F`);
+};
