@@ -42,6 +42,7 @@ export class GrabController {
   private savedAngularDamping = 0;
   /** Last applied force magnitude (N), for UI/tests. */
   lastForce = 0;
+  lastTorque = 0;
   /** True when the force cap is limiting the hand this step (item feels heavy). */
   saturated = false;
 
@@ -121,17 +122,25 @@ export class GrabController {
     const s = Math.sqrt(Math.max(1 - err.w * err.w, 0));
     const angle = 2 * Math.acos(Math.min(err.w, 1));
     const axis = s > 1e-6 ? new THREE.Vector3(err.x / s, err.y / s, err.z / s) : new THREE.Vector3();
-    const inertia = b.principalInertia();
-    const I = (inertia.x + inertia.y + inertia.z) / 3;
+    // PD in angular acceleration, mapped through the full world inertia tensor so long thin items (a knife
+    // has ~60× less inertia about its blade axis) get the right torque on every axis.
     const av = b.angvel();
     const ww = GRAB.WRIST_OMEGA;
+    const alpha = new THREE.Vector3(ww * ww * axis.x * angle - 2 * ww * av.x, ww * ww * axis.y * angle - 2 * ww * av.y, ww * ww * axis.z * angle - 2 * ww * av.z);
+    const Iw = b.effectiveAngularInertia();
     const torque = new THREE.Vector3(
-      I * (ww * ww * axis.x * angle - 2 * ww * av.x),
-      I * (ww * ww * axis.y * angle - 2 * ww * av.y),
-      I * (ww * ww * axis.z * angle - 2 * ww * av.z),
+      Iw.m11 * alpha.x + Iw.m12 * alpha.y + Iw.m13 * alpha.z,
+      Iw.m21 * alpha.x + Iw.m22 * alpha.y + Iw.m23 * alpha.z,
+      Iw.m31 * alpha.x + Iw.m32 * alpha.y + Iw.m33 * alpha.z,
     );
+    // The wrist also resists gravity's twist about the grip (the weight hangs off the hand at the COM).
+    // Capped with the rest, so a heavy pan held at the end of its handle still droops.
+    const com = b.worldCom();
+    const lever = new THREE.Vector3(com.x - anchor.x, com.y - anchor.y, com.z - anchor.z);
+    torque.add(lever.cross(new THREE.Vector3(0, m * G, 0)));
     const tm = torque.length();
     if (tm > GRAB.WRIST_MAX) torque.multiplyScalar(GRAB.WRIST_MAX / tm);
+    this.lastTorque = Math.min(tm, GRAB.WRIST_MAX);
     b.addTorque(torque, true);
   }
 

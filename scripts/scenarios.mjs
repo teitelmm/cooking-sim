@@ -369,3 +369,79 @@ scenarios.probe_therm = async ({ page, shot, game, wait, assert }) => {
   await wait(1500);
   await shot('probe');
 };
+
+scenarios.knife = async ({ page, shot, game, wait, assert }) => {
+  await game(() => window.__game.rig.focusOn({ x: 2.1, y: 1.36 }));
+  await settle(page);
+  const r = await game(() => {
+    const g = window.__game;
+    const find = (id) => [...g.items].find(([, it]) => it.def.id === id);
+    const [kh, knife] = find('chef-knife');
+    const [ph] = find('potato');
+    for (let i = 0; i < 120; i++) g.physics.step();
+    const pp = g.bodyPos(ph);
+    // Pick the knife up (as if pressed on its handle).
+    const kp = knife.entry.body.translation();
+    const scr = g.toScreen(kp.x, kp.y, kp.z);
+    const info = g.input.info(scr.x, scr.y);
+    g.grab.start(kh, { x: kp.x, y: kp.y, z: kp.z, clone() { return this; } }, info);
+    const target = (x, y, z) => g.grab.grab.setTarget({ x, y, z });
+    const run = (n) => {
+      for (let i = 0; i < n; i++) g.physics.step();
+    };
+    const zC = pp.z + 0.105;
+    const startCuts = g.knife.cuts;
+    const sizes = [];
+    for (let s = 0, made = 0; made < 5 && s < 10; s++) {
+      const before = g.knife.cuts;
+      // Aim 6 mm in from the current +x end of the potato, a little sloppy.
+      const pieces = [...g.items].filter(([, it]) => it.def.id === 'potato').map(([h]) => h);
+      const big = pieces.reduce((a, b) => (g.sim.foods.get(a).thermal.mass() > g.sim.foods.get(b).thermal.mass() ? a : b));
+      const bp = g.bodyPos(big);
+      const half = g.sim.foods.get(big).size[0] / 2;
+      const x = bp.x + half - 0.0065 + (s % 2 ? 0.0015 : -0.001);
+      target(x, 1.06, zC);
+      run(90);
+      let maxP = 0;
+      for (let k = 0; k < 60; k++) {
+        target(x, 1.06 - (k / 60) * 0.13, zC);
+        run(2);
+        if (g.knife.active) maxP = Math.max(maxP, g.knife.active.progress);
+      }
+      run(30);
+      const br = g.physics.entries.get(big)?.body.rotation();
+      if (g.knife.cuts > before) made++;
+      window.__strokes = (window.__strokes || []).concat([{ s, x: +x.toFixed(4), half: +half.toFixed(4), maxP: +maxP.toFixed(2), rot: br && [br.x, br.y, br.z, br.w].map((v) => +v.toFixed(2)), n: pieces.length }]);
+      target(x, 1.06, zC);
+      run(60);
+    }
+    for (const [h, it] of g.items) if (it.def.id === 'potato') sizes.push(g.sim.foods.get(h).size[0]);
+    // Now a seared steak (clear the starting one off the board first).
+    for (const [h, it] of [...g.items]) if (it.def.id === 'steak') g.despawn(h);
+    const steak = g.spawn('steak', { x: 2.0, y: 0.97, z: 0.05 });
+    run(60);
+    const sf = g.sim.foods.get(steak.entry.body.handle);
+    window.__debug.searFood?.(sf);
+    const sp = g.bodyPos(steak.entry.body.handle);
+    const pooled0 = g.juice.pooledMl;
+    target(sp.x, 1.08, sp.z + 0.105);
+    run(90);
+    for (let k = 0; k < 80; k++) {
+      target(sp.x, 1.08 - (k / 80) * 0.15, sp.z + 0.105);
+      run(2);
+    }
+    run(60);
+    for (let i = 0; i < 60; i++) g.juice.update(1 / 30);
+    g.grab.end();
+    const steakPieces = [...g.items].filter(([, it]) => it.def.id === 'steak').length;
+    return { strokes: window.__strokes, cuts: g.knife.cuts - startCuts, sizes: sizes.sort().map((x) => +(x * 1000).toFixed(1)), steakPieces, juiceMl: g.juice.pooledMl - pooled0 };
+  });
+  console.log('     ' + JSON.stringify(r));
+  const slices = r.sizes.filter((s) => s < 15);
+  assert(slices.length >= 4, `knife sliced the potato (${slices.length} slices)`);
+  const mean = slices.reduce((a, b) => a + b, 0) / slices.length;
+  assert(slices.every((s) => Math.abs(s - mean) < 1.6), 'slices are even');
+  assert(r.steakPieces === 2, 'knife cut the steak in two');
+  await wait(1500);
+  await shot('knife-cuts');
+};

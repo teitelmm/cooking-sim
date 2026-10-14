@@ -27,6 +27,7 @@ import { HeatBridge } from './world/heatBridge';
 import { WaterSystem } from './world/water';
 import { LiquidSystem } from './world/liquids';
 import { ProbeSystem } from './world/probe';
+import { KnifeSystem } from './world/knife';
 import { partVolume } from './world/shapes';
 import { zone } from './world/kitchenAppliances';
 import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
@@ -62,6 +63,7 @@ export class Game {
   readonly water: WaterSystem;
   readonly liquids: LiquidSystem;
   readonly probes: ProbeSystem;
+  readonly knife: KnifeSystem;
   private bagTimers = new Map<number, number>();
   private lastGameTime = 0;
   ready = false;
@@ -105,6 +107,7 @@ export class Game {
     this.liquids = new LiquidSystem(this.scene, this.physics, this.water, this.appliances.controls, faucetHit);
     this.liquids.floorAt = (x, y, z) => this.floorAt(x, y, z);
     this.probes = new ProbeSystem(this);
+    this.knife = new KnifeSystem(this);
     this.liquids.onSplash = (at, kg, kind) => this.juice.puddle(at, kg, kind === 'oil' ? [0.85, 0.65, 0.2] : [0.7, 0.8, 0.88], kind === 'oil' ? 920 : 1000);
     this.heat.liquidAt = (p) => {
       for (const k of this.liquids.all) {
