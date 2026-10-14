@@ -105,6 +105,11 @@ export class JuiceSystem {
     return d;
   }
 
+  /** Spilled liquid (water, oil) forms a puddle like juice does. */
+  puddle(at: THREE.Vector3, kg: number, color: RGB, density = 1000): void {
+    this.addToPool(at, kg / density, color);
+  }
+
   private addToPool(at: THREE.Vector3, volume: number, color: RGB): void {
     let pool = this.pools.find((p) => Math.abs(p.center.y - at.y) < 0.01 && p.center.distanceTo(at) < this.radius(p.volume) + 0.02);
     if (!pool) {

@@ -268,3 +268,70 @@ scenarios.sousvide = async ({ page, shot, game, wait, assert }) => {
   await wait(1500);
   await shot('sous-vide-bath');
 };
+
+scenarios.liquids = async ({ page, shot, game, wait, assert }) => {
+  const r = await game(() => {
+    const g = window.__game;
+    const tick = (n) => {
+      for (let i = 0; i < n; i++) {
+        for (let k = 0; k < 4; k++) g.physics.step();
+        g.liquids.frame(1 / 30, []);
+      }
+      g.physics.sync();
+    };
+    const potH = [...g.items].find(([, it]) => it.def.id === 'stock-pot')[0];
+    const pot = g.physics.entries.get(potH).body;
+    // Fill at the sink.
+    pot.setTranslation({ x: 7.0, y: 0.69, z: -0.11 }, true);
+    tick(30);
+    g.liquids.faucetOn = true;
+    tick(30 * 28);
+    g.liquids.faucetOn = false;
+    tick(60);
+    const filled = g.liquids.contentsOf(potH).water;
+    // Onto the back-right burner, on high.
+    pot.setTranslation({ x: 3.4, y: 0.96, z: -0.14 }, true);
+    tick(60);
+    g.appliances.burners[1].knob = 1;
+    let t = 0;
+    const c = g.liquids.contentsOf(potH);
+    while (c.vigor < 0.6 && t < 3600) {
+      g.fastForward(10, 0.5);
+      t += 10;
+    }
+    tick(60);
+    // Pour oil from the bottle into the stainless pan on the front-right burner.
+    const pan = g.spawn('stainless-pan', { x: 3.4, y: 0.95, z: 0.15 });
+    tick(30);
+    const bottle = g.spawn('oil-bottle', { x: 3.4, y: 1.15, z: 0.12 });
+    bottle.entry.body.setGravityScale(0, true);
+    bottle.entry.body.setRotation({ x: 0.906, y: 0, z: 0, w: 0.423 }, true); // tipped ~130°
+    bottle.entry.body.setTranslation({ x: 3.4, y: 1.12, z: -0.03 }, true);
+    for (let i = 0; i < 60; i++) {
+      bottle.entry.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      bottle.entry.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      tick(1);
+    }
+    g.despawn(bottle.entry.body.handle);
+    tick(60);
+    const panC = g.liquids.contentsOf(pan.entry.body.handle);
+    const oil = panC.oil;
+    g.appliances.burners[3].knob = 1;
+    let ts = 0;
+    while (panC.smoke < 0.3 && ts < 1200) {
+      g.fastForward(5, 0.5);
+      ts += 5;
+    }
+    tick(90);
+    return { filled, boilMin: t / 60, potF: (c.T * 9) / 5 + 32, oil, smokeAfterMin: ts / 60, oilF: (panC.T * 9) / 5 + 32, smoke: panC.smoke };
+  });
+  console.log('     ' + JSON.stringify(r));
+  assert(r.filled > 2.0, `faucet filled the pot (${r.filled.toFixed(2)} kg)`);
+  assert(r.boilMin > 8 && r.boilMin < 22, `rolling boil in a plausible time (${r.boilMin.toFixed(1)} min)`);
+  assert(r.oil > 0.02, `oil poured into the pan (${(r.oil * 1000).toFixed(0)} g)`);
+  assert(r.smoke >= 0.3 && r.oilF > 450, 'oil smokes past its smoke point');
+  await game(() => window.__game.rig.focusOn({ x: 3.25, y: 1.42 }));
+  await settle(page);
+  await wait(1500);
+  await shot('boil-and-smoke');
+};

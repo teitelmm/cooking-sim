@@ -25,6 +25,7 @@ import { RAPIER } from './engine/physics';
 import { KitchenAppliances } from './world/kitchenAppliances';
 import { HeatBridge } from './world/heatBridge';
 import { WaterSystem } from './world/water';
+import { LiquidSystem } from './world/liquids';
 import { partVolume } from './world/shapes';
 import { zone } from './world/kitchenAppliances';
 import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
@@ -58,6 +59,7 @@ export class Game {
   readonly appliances: KitchenAppliances;
   readonly heat: HeatBridge;
   readonly water: WaterSystem;
+  readonly liquids: LiquidSystem;
   private bagTimers = new Map<number, number>();
   private lastGameTime = 0;
   ready = false;
@@ -95,6 +97,21 @@ export class Game {
       density: 1000,
     });
     this.renderer.domElement.addEventListener('dblclick', (e) => this.onDoubleClick(e));
+    const faucetHit = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.36, 0.22), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+    faucetHit.position.set(7.0, KITCHEN.counterTop + 0.17, -0.2);
+    this.scene.add(faucetHit);
+    this.liquids = new LiquidSystem(this.scene, this.physics, this.water, this.appliances.controls, faucetHit);
+    this.liquids.floorAt = (x, y, z) => this.floorAt(x, y, z);
+    this.liquids.onSplash = (at, kg, kind) => this.juice.puddle(at, kg, kind === 'oil' ? [0.85, 0.65, 0.2] : [0.7, 0.8, 0.88], kind === 'oil' ? 920 : 1000);
+    this.heat.liquidAt = (p) => {
+      for (const k of this.liquids.all) {
+        if (k.c.kg < 0.01 || k.pan.id === 'oil-bottle') continue;
+        const t = this.physics.entries.get(k.handle)?.body.translation();
+        if (!t) continue;
+        if (this.liquids.holds(k, p) && p.y < t.y + Math.min(k.c.level, k.pan.spec.depth!) + 0.003) return k.c;
+      }
+      return null;
+    };
     this.audio = new Audio(this.events);
     this.juice = new JuiceSystem(this.scene, (x, y, z) => this.floorAt(x, y, z));
     this.buildScene();
@@ -141,7 +158,11 @@ export class Game {
       item.entry.data.foodCenter = center;
       this.foodViews.set(h, new FoodView(food, item.view, center, def.color ?? 0xaa5555, piece?.hull));
     }
-    this.heat.registerCookware(h, def.id);
+    const ck = this.heat.registerCookware(h, def.id);
+    if (ck?.contents) {
+      this.liquids.track(h, ck);
+      if (def.id === 'oil-bottle') ck.contents.add('oil', 0.85);
+    }
     this.events.emit('spawn', { body: h, itemId: def.id });
     this.enforceItemCap();
     return item;
@@ -256,6 +277,7 @@ export class Game {
     this.foodViews.get(handle)?.dispose();
     this.foodViews.delete(handle);
     this.heat.unregister(handle);
+    this.liquids.untrack(handle);
     this.items.delete(handle);
     const i = this.grab.pickables.indexOf(it.view);
     if (i >= 0) this.grab.pickables.splice(i, 1);
@@ -300,6 +322,15 @@ export class Game {
     this.juice.update(dt);
     this.appliances.frame(dt);
     this.updateBagging(dt);
+    const lids = [...this.items.values()]
+      .filter((i) => i.def.id === 'pot-lid')
+      .map((i) => {
+        const b = i.entry.body;
+        const r = b.rotation();
+        const t = b.translation();
+        return { handle: b.handle, pos: new THREE.Vector3(t.x, t.y, t.z), up: new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w)) };
+      });
+    this.liquids.frame(dt, lids);
     this.renderer.render(this.scene, this.camera);
     const held = this.grab.heldHandle !== null ? this.items.get(this.grab.heldHandle) : undefined;
     this.overlay.update(realDt, {

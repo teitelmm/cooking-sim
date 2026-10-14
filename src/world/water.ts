@@ -14,6 +14,10 @@ export interface WaterVolume {
   density: number;
   /** Current surface height including what's been displaced. */
   level: number;
+  /** Moving containers (pots): update position each step; return false to disable (tipped over / gone). */
+  follow?: (w: WaterVolume) => boolean;
+  /** Body to ignore (the pot itself). */
+  ignore?: number;
 }
 
 const G = 9.81;
@@ -36,6 +40,11 @@ export class WaterSystem {
     return w;
   }
 
+  remove(w: WaterVolume): void {
+    const i = this.volumes.indexOf(w);
+    if (i >= 0) this.volumes.splice(i, 1);
+  }
+
   /** Volume of the body that's below the surface, m³ (0 if not in this volume). */
   private submerged(w: WaterVolume, y: number, halfH: number, vol: number): number {
     if (w.baseLevel() <= w.floorY + 0.002) return 0;
@@ -46,10 +55,11 @@ export class WaterSystem {
 
   private apply(): void {
     for (const w of this.volumes) {
+      if (w.follow && !w.follow(w)) continue;
       let displaced = 0;
       const base = w.baseLevel();
       for (const e of this.physics.entries.values()) {
-        if (!e.body.isDynamic()) continue;
+        if (!e.body.isDynamic() || e.body.handle === w.ignore) continue;
         const vol = e.data.volume as number | undefined;
         const halfH = e.data.halfHeight as number | undefined;
         if (!vol || !halfH) continue;

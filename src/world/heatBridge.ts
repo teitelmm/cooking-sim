@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RAPIER, type BodyEntry, type PhysicsWorld } from '../engine/physics';
 import { Cookware, COOKWARE } from '../sim/cookware';
 import type { FoodItem } from '../sim/food';
+import type { Contents } from '../sim/liquid';
 import { airEnv, DIRS, H, type FaceEnv } from '../sim/foodThermal';
 import { abovePanEnv } from '../sim/recipes';
 import { ROOM_C } from '../sim/units';
@@ -17,7 +18,7 @@ type Contact =
   | { kind: 'cold' }
   | { kind: 'none' };
 
-type Fluid = 'oven' | 'airFryer' | 'sousVide' | null;
+type Fluid = 'oven' | 'airFryer' | 'sousVide' | Contents | null;
 
 const tmpQ = new THREE.Quaternion();
 const tmpV = new THREE.Vector3();
@@ -34,6 +35,9 @@ export class HeatBridge {
   private readonly zSous = zone('sous-vide');
   private readonly zGriddle = zone('griddle');
   private readonly zGrill = zone('grill');
+
+  /** Liquid (in a pot/pan) a world point is submerged in, if any. Set by the game. */
+  liquidAt: ((p: THREE.Vector3) => Contents | null) | null = null;
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -72,7 +76,10 @@ export class HeatBridge {
         else if (c.kind === 'rack') a.oven.load += t.contactHeat;
       }
       const fl = this.lastFluid.get(h);
-      if (fl && t.fluidHeat > 0) a[fl].load += t.fluidHeat;
+      if (fl && t.fluidHeat > 0) {
+        if (typeof fl === 'string') a[fl].load += t.fluidHeat;
+        else fl.load += t.fluidHeat;
+      }
       t.contactHeat = 0;
       t.fluidHeat = 0;
     }
@@ -158,7 +165,16 @@ export class HeatBridge {
     let fluid: Fluid = null;
     let contact: Contact = { kind: 'none' };
     const envs: FaceEnv[] = [];
-    if (inZone(this.zSous, centerW) && centerW.y < (a.sousVideVolume?.level ?? a.sousVideLevel)) {
+    const liquid = this.liquidAt?.(centerW) ?? null;
+    if (liquid) {
+      // In a pot of water (simmering/boiling) or a pan/pot of oil (frying).
+      fluid = liquid;
+      const oil = liquid.kind === 'oil';
+      const wet = t.crustWater() > t.crustMax * 0.2;
+      const h = oil ? (wet ? H.fry : 220) : liquid.vigor > 0.5 ? H.boil : liquid.vigor > 0.1 ? H.simmer : 300;
+      const env: FaceEnv = { medium: oil ? 'oil' : e.data.bagged ? 'bag' : 'water', fluidT: liquid.T, fluidH: h, contactT: liquid.T, contactH: 0, contactFrac: 0, radT: liquid.T, radView: 0 };
+      for (let d = 0; d < 6; d++) envs.push(env);
+    } else if (inZone(this.zSous, centerW) && centerW.y < (a.sousVideVolume?.level ?? a.sousVideLevel)) {
       fluid = 'sousVide';
       const bagged = !!e.data.bagged;
       const env: FaceEnv = { medium: bagged ? 'bag' : 'water', fluidT: a.sousVide.T, fluidH: bagged ? H.sousVide : 500, contactT: a.sousVide.T, contactH: 0, contactFrac: 0, radT: a.sousVide.T, radView: 0 };
@@ -194,8 +210,19 @@ export class HeatBridge {
       // The face resting on something.
       const dEnv = envs[down];
       if (surfT !== null) {
+        const oiled = contact.kind === 'cookware' && (contact.pan.contents?.oil ?? 0) > 0.003;
         const ch =
-          contact.kind === 'grill' ? H.grillContact : contact.kind === 'rack' ? 180 : contact.kind === 'flame' ? 60 : contact.kind === 'cold' ? 40 : H.panContact;
+          contact.kind === 'grill'
+            ? H.grillContact
+            : contact.kind === 'rack'
+              ? 180
+              : contact.kind === 'flame'
+                ? 60
+                : contact.kind === 'cold'
+                  ? 40
+                  : contact.kind === 'cookware' && !oiled
+                    ? 300 // a dry pan makes patchy contact
+                    : H.panContact;
         envs[down] = { ...dEnv, contactT: surfT, contactH: ch, contactFrac: contact.kind === 'cold' ? 0.6 : 0.9 };
         if (contact.kind === 'grill') {
           const z = contact.zone;

@@ -246,6 +246,10 @@ counter(1.4, 2.8);
   // Control panel + cooktop plate.
   box(x0, x1, cook - 0.03, cook, BACK, FRONT, 'enamel', { color: 0x1b1c1f, tag: 'cooktop' });
   box(x0, x1, cook, cook + 0.14, WALL_Z + 0.0, BACK + 0.06, 'enamel', { color: 0x2d2f33, tag: 'range-backguard' });
+  // Shelf above the range for more pans.
+  box(x0 + 0.02, x1 - 0.02, 1.6, 1.62, WALL_Z, WALL_Z + 0.3, 'steel', { surface: 'all', tag: 'range-shelf', color: 0x8d9296 });
+  spawners.push({ itemId: 'nonstick-pan', pos: [2.98, 1.62, -0.2], label: 'Nonstick skillet' });
+  spawners.push({ itemId: 'saute-pan', pos: [3.38, 1.62, -0.2], label: 'Sauté pan' });
   zones.push({ id: 'oven', kind: 'oven', pos: [3.2, 0.44, -0.005], size: [0.66, 0.6, 0.57] });
   // 4 burners: cast-iron grates (bars both ways) sized for cookware; glowing rings under.
   const burners: [number, number][] = [
@@ -323,6 +327,8 @@ counter(1.4, 2.8);
   spawners.push({ itemId: 'plate', pos: [7.62, 1.4, -0.22], label: 'Plate' });
   spawners.push({ itemId: 'colander', pos: [7.92, 1.4, -0.22], label: 'Colander' });
   spawners.push({ itemId: 'sheet-pan', pos: [7.86, COUNTER_TOP, -0.15], label: 'Sheet pan' });
+  spawners.push({ itemId: 'wire-rack', pos: [7.86, COUNTER_TOP + 0.025, -0.15], label: 'Wire rack' });
+  spawners.push({ itemId: 'pot-lid', pos: [7.95, COUNTER_TOP, 0.17], label: 'Pot lid' });
 }
 
 // Upper cabinets (decor) to frame the view.
