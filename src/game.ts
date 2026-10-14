@@ -6,6 +6,8 @@ import { EventBus } from './engine/events';
 import { SimWorld } from './sim/simWorld';
 import { DebugOverlay } from './ui/debugOverlay';
 import { bindTimeScaleKeys } from './ui/timeScale';
+import { CameraRig } from './engine/cameraRig';
+import { PointerRouter } from './engine/input';
 
 export class Game {
   readonly events = new EventBus();
@@ -16,6 +18,8 @@ export class Game {
   readonly sim = new SimWorld();
   readonly loop: FixedLoop;
   readonly overlay: DebugOverlay;
+  readonly rig = new CameraRig({ minX: -3, maxX: 3, minY: 1.25, maxY: 1.75, minZ: 1.25, maxZ: 2.05 }, { x: 0, y: 1.45, z: 1.65 });
+  readonly input: PointerRouter;
   ready = false;
   private last = performance.now();
 
@@ -28,13 +32,13 @@ export class Game {
     });
     bindTimeScaleKeys(this.loop);
     bindResize(container, this.renderer, this.camera);
+    this.input = new PointerRouter(this.renderer.domElement, this.camera, this.rig);
     this.buildScene();
   }
 
   private buildScene(): void {
     this.scene.background = new THREE.Color(0x2a221c);
-    this.camera.position.set(0, 1.45, 1.6);
-    this.camera.lookAt(0, 0.95, 0);
+    this.rig.applyTo(this.camera);
 
     this.scene.add(new THREE.HemisphereLight(0xfff1dd, 0x3a2c22, 0.6));
     const sun = new THREE.DirectionalLight(0xffe2bf, 2.2);
@@ -53,6 +57,17 @@ export class Game {
     this.physics.add(RAPIER.RigidBodyDesc.fixed(), [RAPIER.ColliderDesc.cuboid(10, 0.05, 10).setTranslation(0, -0.05, 0)], {
       tag: 'floor',
     });
+
+    // Placeholder row of markers so panning is visible until the kitchen exists.
+    for (let i = -6; i <= 6; i++) {
+      const m = new THREE.Mesh(
+        new THREE.BoxGeometry(0.25, 0.9, 0.25),
+        new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL((i + 6) / 13, 0.5, 0.5) }),
+      );
+      m.position.set(i * 0.6, 0.45, -0.6);
+      m.castShadow = true;
+      this.scene.add(m);
+    }
 
     const box = new THREE.Mesh(
       new THREE.BoxGeometry(0.3, 0.3, 0.3),
@@ -79,6 +94,8 @@ export class Game {
   }
 
   update(realDt: number): void {
+    this.rig.update(Math.min(realDt, 0.1));
+    this.rig.applyTo(this.camera);
     this.loop.tick(realDt);
     this.physics.sync();
     this.renderer.render(this.scene, this.camera);
