@@ -26,6 +26,9 @@ interface Pool {
  * Meat juices: drops ooze out of a fresh cut, run down and collect into a glossy pool on the surface
  * below. Volume released comes from the sim (free juice near the cut), color from how cooked the meat is.
  */
+/** Most puddle meshes kept at once. */
+const MAX_POOLS = 48;
+
 export class JuiceSystem {
   private readonly drops: Drop[] = [];
   readonly pools: Pool[] = [];
@@ -112,6 +115,13 @@ export class JuiceSystem {
 
   private addToPool(at: THREE.Vector3, volume: number, color: RGB): void {
     let pool = this.pools.find((p) => Math.abs(p.center.y - at.y) < 0.01 && p.center.distanceTo(at) < this.radius(p.volume) + 0.02);
+    if (!pool && this.pools.length >= MAX_POOLS) {
+      // Pool limit: recycle the smallest puddle's mesh (it has mostly soaked in / been wiped by now).
+      const small = this.pools.reduce((a, b) => (a.volume < b.volume ? a : b));
+      small.volume = 0;
+      small.center.copy(at);
+      pool = small;
+    }
     if (!pool) {
       const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.08, metalness: 0, transparent: true, opacity: 0.82, depthWrite: false });
       const mesh = new THREE.Mesh(new THREE.CircleGeometry(1, 28), mat);
@@ -121,7 +131,7 @@ export class JuiceSystem {
       pool = { mesh, volume: 0, center: at.clone(), color: new THREE.Color().setRGB(color[0], color[1], color[2], THREE.SRGBColorSpace) };
       this.pools.push(pool);
     }
-    const total = pool.volume + volume;
+    const total = Math.max(pool.volume + volume, 1e-12);
     pool.center.lerp(at, volume / total);
     pool.color.lerp(new THREE.Color().setRGB(color[0], color[1], color[2], THREE.SRGBColorSpace), volume / total);
     pool.volume = total;

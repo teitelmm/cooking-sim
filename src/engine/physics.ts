@@ -27,6 +27,12 @@ export interface BodyEntry {
   data: Record<string, unknown>;
 }
 
+/**
+ * Soft-CCD look-ahead (m). Off: a body with soft CCD (ever) stops Rapier from putting it — and the pile
+ * it rests in — to sleep. Hard CCD plus the hand's force/acceleration caps keep items out of counters.
+ */
+export const SOFT_CCD = 0;
+
 /** Contact-force magnitude (N) above which an impact event fires. */
 export const IMPACT_THRESHOLD = 4;
 
@@ -87,10 +93,14 @@ export class PhysicsWorld {
   step(): void {
     // User forces persist in Rapier until reset: clear them so each hook adds this step's forces only.
     for (const e of this.entries.values()) {
-      if (e.body.isDynamic() && !e.body.isSleeping()) {
-        e.body.resetForces(false);
-        e.body.resetTorques(false);
-      }
+      const b = e.body;
+      if (!b.isDynamic() || b.isSleeping()) continue;
+      // Only touch bodies that actually carry a user force: resetting every awake body each step stops
+      // Rapier from ever putting them to sleep.
+      const f = b.userForce();
+      if (f.x !== 0 || f.y !== 0 || f.z !== 0) b.resetForces(false);
+      const tq = b.userTorque();
+      if (tq.x !== 0 || tq.y !== 0 || tq.z !== 0) b.resetTorques(false);
     }
     for (const f of this.preStep) f(PHYSICS_DT);
     this.world.step(this.queue);

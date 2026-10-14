@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { PhysicsWorld } from '../engine/physics';
 import type { Cookware } from '../sim/cookware';
+import { PuffPool } from '../render/puffs';
 import type { Contents, LiquidKind } from '../sim/liquid';
 import { ROOM_C } from '../sim/units';
 import type { WaterSystem, WaterVolume } from './water';
@@ -45,13 +46,6 @@ function puffTexture(): THREE.Texture {
   return new THREE.CanvasTexture(cv);
 }
 
-interface Puff {
-  s: THREE.Sprite;
-  v: THREE.Vector3;
-  life: number;
-  max: number;
-}
-
 /**
  * Liquids you can see and pour: surfaces in pots and pans, tilting a container past its rim pours
  * drops that land in whatever's underneath (or splash), the sink faucet runs, boiling water bubbles
@@ -62,8 +56,7 @@ export class LiquidSystem {
   private readonly drops: Drop[] = [];
   private readonly inst: THREE.InstancedMesh;
   private readonly dummy = new THREE.Object3D();
-  private readonly puffs: Puff[] = [];
-  private readonly puffTex = puffTexture();
+  private readonly puffPool: PuffPool;
   faucetOn = false;
   private readonly sink = zone('sink');
   /** Splash callback (puddles). */
@@ -84,6 +77,7 @@ export class LiquidSystem {
     this.inst.count = 0;
     this.inst.frustumCulled = false;
     scene.add(this.inst);
+    this.puffPool = new PuffPool(scene, puffTexture());
     controls.register(faucet, { kind: 'button', press: () => (this.faucetOn = !this.faucetOn), label: 'Faucet' });
   }
 
@@ -339,32 +333,11 @@ export class LiquidSystem {
   }
 
   private puff(at: THREE.Vector3, spread: number, color: number, life: number): void {
-    let p = this.puffs.find((q) => q.life <= 0);
-    if (!p) {
-      if (this.puffs.length > 160) return;
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.puffTex, transparent: true, depthWrite: false, opacity: 0 }));
-      this.scene.add(s);
-      p = { s, v: new THREE.Vector3(), life: 0, max: 1 };
-      this.puffs.push(p);
-    }
-    p.s.position.set(at.x + (Math.random() - 0.5) * spread, at.y, at.z + (Math.random() - 0.5) * spread);
-    (p.s.material as THREE.SpriteMaterial).color.setHex(color);
-    p.v.set((Math.random() - 0.5) * 0.03, 0.12 + Math.random() * 0.1, (Math.random() - 0.5) * 0.03);
-    p.life = p.max = life * (0.7 + Math.random() * 0.6);
-    p.s.visible = true;
+    this.puffPool.emit(at, spread, color, life);
   }
 
   private updatePuffs(dt: number): void {
-    for (const p of this.puffs) {
-      if (p.life <= 0) continue;
-      p.life -= dt;
-      p.s.position.addScaledVector(p.v, dt);
-      const a = Math.max(p.life / p.max, 0);
-      const size = 0.04 + (1 - a) * 0.14;
-      p.s.scale.set(size, size, size);
-      (p.s.material as THREE.SpriteMaterial).opacity = a * 0.35;
-      if (p.life <= 0) p.s.visible = false;
-    }
+    this.puffPool.update(dt);
   }
 
   private readonly fires = new Map<number, { group: THREE.Group; light: THREE.PointLight }>();

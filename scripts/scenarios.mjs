@@ -1068,3 +1068,34 @@ scenarios.playthrough = async ({ page, shot, game, wait, assert }) => {
   await shot('play-5-plated');
   console.log(`     peak core ${F(((cut.peakF - 32) * 5) / 9).toFixed(0)}°F`);
 };
+
+/**
+ * Stress scene: every station cooking, 40+ bodies. Reports smoothed CPU cost per frame by phase at 1× and
+ * 20× (SwiftShader GPU emulation makes FPS/render time unrepresentative here; CPU budget is what we check).
+ */
+scenarios.stress = async ({ page, shot, game, wait, assert }) => {
+  await wait(800);
+  const info = await game(() => window.__debug.stress());
+  console.log('     stress scene: ' + JSON.stringify(info));
+  assert(info.bodies >= 40, `40+ rigid bodies (${info.bodies})`);
+  const measure = async (scale, label) => {
+    await game((s) => {
+      window.__game.loop.timeScale = s;
+    }, scale);
+    await wait(6000);
+    const p = await game(() => ({ ...window.__game.perf, fps: window.__game.overlay.fps, awake: [...window.__game.physics.entries.values()].filter((e) => e.body.isDynamic() && !e.body.isSleeping()).length }));
+    const r = Object.fromEntries(Object.entries(p).map(([k, v]) => [k, +v.toFixed(2)]));
+    console.log(`     ${label}: ` + JSON.stringify(r));
+    return r;
+  };
+  await game(() => window.__game.rig.focusOn({ x: 3.6, y: 1.4 }));
+  await settle(page);
+  const r1 = await measure(1, '1x');
+  const r20 = await measure(20, '20x');
+  await shot('stress');
+  const cpu1 = r1.physics + r1.sim + r1.other;
+  const cpu20 = r20.physics + r20.sim + r20.other;
+  console.log(`     CPU per frame (excl. render): 1x ${cpu1.toFixed(1)} ms, 20x ${cpu20.toFixed(1)} ms`);
+  assert(cpu1 < 8, 'CPU work fits a 60 FPS budget at 1×');
+  assert(cpu20 < 16, 'CPU work fits a 60 FPS budget at 20× (sim time-scaled)');
+};

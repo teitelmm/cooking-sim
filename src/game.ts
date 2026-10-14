@@ -80,6 +80,12 @@ export class Game {
   private lastGameTime = 0;
   ready = false;
   private last = performance.now();
+  /** Smoothed per-frame CPU cost, ms (physics, sim, everything else, render submit). */
+  readonly perf = { frame: 0, physics: 0, sim: 0, other: 0, render: 0 };
+  private acc = { physics: 0, sim: 0 };
+  private readonly frustum = new THREE.Frustum();
+  private readonly projView = new THREE.Matrix4();
+  private readonly sphere = new THREE.Sphere();
 
   constructor(
     readonly container: HTMLElement,
@@ -88,8 +94,16 @@ export class Game {
     this.renderer = createRenderer(container);
     this.overlay = new DebugOverlay(debugEl);
     this.loop = new FixedLoop({
-      physicsStep: () => this.physics.step(),
-      simStep: (dt) => this.sim.step(dt),
+      physicsStep: () => {
+        const t = performance.now();
+        this.physics.step();
+        this.acc.physics += performance.now() - t;
+      },
+      simStep: (dt) => {
+        const t = performance.now();
+        this.sim.step(dt);
+        this.acc.sim += performance.now() - t;
+      },
     });
     bindTimeScaleKeys(this.loop);
     bindResize(container, this.renderer, this.camera);
@@ -356,6 +370,8 @@ export class Game {
   }
 
   update(realDt: number): void {
+    const t0 = performance.now();
+    this.acc.physics = this.acc.sim = 0;
     const dt = Math.min(realDt, 0.1);
     this.rig.update(dt);
     this.edgePan(dt);
@@ -365,7 +381,13 @@ export class Game {
     this.physics.sync();
     const gdt = this.sim.gameTime - this.lastGameTime;
     this.lastGameTime = this.sim.gameTime;
-    for (const v of this.foodViews.values()) v.update(gdt);
+    this.camera.updateMatrixWorld();
+    this.frustum.setFromProjectionMatrix(this.projView.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+    for (const [h, v] of this.foodViews) {
+      const it = this.items.get(h);
+      const visible = !it || this.frustum.containsPoint(it.view.position) || this.frustum.intersectsSphere(this.sphere.set(it.view.position, 0.15));
+      v.update(gdt, dt, visible);
+    }
     this.juice.update(dt);
     this.appliances.frame(dt);
     this.updateBagging(dt);
@@ -386,7 +408,15 @@ export class Game {
     this.tools.frame(dt);
     this.feedback.frame(dt, gdt);
     this.hud.frame();
+    const tr = performance.now();
     this.renderer.render(this.scene, this.camera);
+    const t1 = performance.now();
+    const ema = (k: keyof Game['perf'], v: number) => (this.perf[k] += (v - this.perf[k]) * 0.1);
+    ema('frame', t1 - t0);
+    ema('physics', this.acc.physics);
+    ema('sim', this.acc.sim);
+    ema('render', t1 - tr);
+    ema('other', tr - t0 - this.acc.physics - this.acc.sim);
     const held = this.grab.heldHandle !== null ? this.items.get(this.grab.heldHandle) : undefined;
     this.overlay.update(realDt, {
       bodies: this.physics.dynamicCount,

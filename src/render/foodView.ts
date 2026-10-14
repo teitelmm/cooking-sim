@@ -18,6 +18,7 @@ export class FoodView {
   readonly material: THREE.MeshStandardMaterial;
   private readonly caps: { mesh: THREE.Mesh; plane: Plane; tex: THREE.DataTexture }[] = [];
   private timer = 0;
+  private realTimer = 1;
   private capTimer = 0;
   private readonly raw: RGB;
 
@@ -216,13 +217,20 @@ export class FoodView {
   }
 
   /** Call every frame with game-time dt. Texture refresh is throttled. */
-  update(gameDt: number): void {
+  /**
+   * Refresh the surface texture every ~0.5 game-s, but no more than ~6×/s of real time (fast-forward) and
+   * not at all while off screen (it catches up the moment it comes back into view).
+   */
+  update(gameDt: number, realDt = 1, visible = true): void {
     this.timer += gameDt;
+    this.capTimer += gameDt;
+    this.realTimer += realDt;
+    if (!visible || this.realTimer < 0.16) return;
     if (this.timer > 0.5) {
       this.timer = 0;
+      this.realTimer = 0;
       this.refresh();
     }
-    this.capTimer += gameDt;
     if (this.caps.length && this.capTimer > 4) {
       this.capTimer = 0;
       for (const c of this.caps) this.renderCap(c);

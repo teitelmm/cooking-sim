@@ -56,7 +56,10 @@ class Hinge {
   /** Smoothly move the panel toward its target angle (call every frame). */
   update(): void {
     const q = new THREE.Quaternion().setFromAxisAngle(this.axis, this.open * this.maxAngle);
+    // Settled: leave the kinematic body alone so whatever rests on the door/lid can sleep.
+    if (this.pivot.quaternion.angleTo(q) < 1e-4) return;
     this.pivot.quaternion.slerp(q, 0.35);
+    if (this.pivot.quaternion.angleTo(q) < 1e-4) this.pivot.quaternion.copy(q);
     this.entry.body.setNextKinematicRotation(this.pivot.quaternion);
   }
 }

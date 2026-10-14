@@ -19,6 +19,8 @@ export const GRAB = {
   /** Max wrist torque, N·m. */
   WRIST_MAX: 3.0,
   WRIST_OMEGA: 12,
+  /** Hand speed limit, m/s: past it the hand stops pushing further along its motion (no slamming). */
+  HAND_SPEED: 2.5,
   /** Max release speed, m/s. */
   THROW_MAX: 6,
   /** Extra angular damping while held. */
@@ -62,6 +64,7 @@ export class GrabController {
     this.attached.length = 0;
     this.targetRot.set(r.x, r.y, r.z, r.w);
     this.pendingSpin.set(0, 0, 0);
+    body.userData = { ...((body.userData as object) ?? {}), held: true };
     this.savedAngularDamping = body.angularDamping();
     body.setAngularDamping(this.savedAngularDamping + GRAB.HELD_ANGULAR_DAMPING);
     body.wakeUp();
@@ -114,6 +117,12 @@ export class GrabController {
       m * (w * w * (tg.y - anchor.y) - 2 * GRAB.ZETA * w * va.y + G),
       m * (w * w * (tg.z - anchor.z) - 2 * GRAB.ZETA * w * va.z),
     );
+    const speed = Math.hypot(va.x, va.y, va.z);
+    if (speed > GRAB.HAND_SPEED) {
+      // Remove the component that would accelerate it further (gravity support stays).
+      const along = (force.x * va.x + force.y * va.y + force.z * va.z) / speed - (va.y / speed) * m * G;
+      if (along > 0) force.addScaledVector(new THREE.Vector3(va.x, va.y, va.z), -along / speed);
+    }
     const mag = force.length();
     const cap = Math.min(GRAB.GRIP_MAX, m * GRAB.ACCEL_MAX);
     this.saturated = mag > GRAB.GRIP_MAX;
@@ -192,6 +201,7 @@ export class GrabController {
     const b = this.body;
     this.body = null;
     if (!b || !b.isValid()) return 0;
+    b.userData = { ...((b.userData as object) ?? {}), held: false };
     b.resetForces(true);
     b.resetTorques(true);
     b.setAngularDamping(this.savedAngularDamping);

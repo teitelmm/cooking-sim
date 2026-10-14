@@ -1,11 +1,10 @@
 import * as THREE from 'three';
-import { RAPIER, type BodyEntry, type PhysicsWorld } from '../engine/physics';
+import { RAPIER, SOFT_CCD, type BodyEntry, type PhysicsWorld } from '../engine/physics';
 import { MATERIALS } from '../data/materials';
 import type { ItemDef } from '../data/items';
 import { buildColliders, buildPartGeometry } from './shapes';
 
-/** Soft-CCD look-ahead distance, m. */
-export const SOFT_CCD = 0.03;
+export { SOFT_CCD };
 
 export interface SpawnedItem {
   entry: BodyEntry;

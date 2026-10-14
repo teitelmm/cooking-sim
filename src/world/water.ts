@@ -16,6 +16,8 @@ export interface WaterVolume {
   level: number;
   /** Moving containers (pots): update position each step; return false to disable (tipped over / gone). */
   follow?: (w: WaterVolume) => boolean;
+  /** Level last step (to tell when to wake sleepers). */
+  lastLevel?: number;
   /** Body to ignore (the pot itself). */
   ignore?: number;
 }
@@ -58,8 +60,18 @@ export class WaterSystem {
       if (w.follow && !w.follow(w)) continue;
       let displaced = 0;
       const base = w.baseLevel();
+      // Something resting on the bottom can sleep: only wake it again if the water level moves.
+      const levelMoved = Math.abs(w.level - (w.lastLevel ?? -1)) > 0.001;
+      w.lastLevel = w.level;
       for (const e of this.physics.entries.values()) {
         if (!e.body.isDynamic() || e.body.handle === w.ignore) continue;
+        if (e.body.isSleeping() && !levelMoved) {
+          const vol = e.data.volume as number | undefined;
+          const halfH = e.data.halfHeight as number | undefined;
+          const p = e.body.translation();
+          if (vol && halfH && Math.abs(p.x - w.cx) <= w.hx && Math.abs(p.z - w.cz) <= w.hz) displaced += this.submerged(w, p.y, halfH, vol);
+          continue;
+        }
         const vol = e.data.volume as number | undefined;
         const halfH = e.data.halfHeight as number | undefined;
         if (!vol || !halfH) continue;
