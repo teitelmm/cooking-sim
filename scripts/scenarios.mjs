@@ -99,7 +99,7 @@ scenarios.spawner = async ({ page, shot, game, wait, assert }) => {
     const g = window.__game;
     const d = g.grab.spawnerDisplays.find((o) => o.userData.spawner.itemId === 'steak');
     const v = d.position.clone().project(g.camera);
-    return { x: (v.x * 0.5 + 0.5) * innerWidth, y: (-v.y * 0.5 + 0.5) * innerHeight };
+    return { x: (v.x * 0.5 + 0.5) * window.innerWidth, y: (-v.y * 0.5 + 0.5) * window.innerHeight };
   });
   await page.mouse.move(p.x, p.y);
   await page.mouse.down();
