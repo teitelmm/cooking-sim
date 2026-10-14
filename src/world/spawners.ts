@@ -5,7 +5,7 @@ import type { SpawnerSlot } from './kitchenLayout';
 import { buildPartGeometry, partsBounds } from './shapes';
 
 /** Max live dynamic items; the oldest un-held item is removed beyond this. */
-export const MAX_LIVE_ITEMS = 80;
+export const MAX_LIVE_ITEMS = 160;
 
 /** Position for spawning an item so its bottom rests at `slot.pos`. */
 export function spawnPosition(slot: SpawnerSlot): { x: number; y: number; z: number } {

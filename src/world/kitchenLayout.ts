@@ -220,13 +220,22 @@ counter(1.4, 2.8);
   // Knife block + utensil shelf.
   box(2.62, 2.74, COUNTER_TOP, COUNTER_TOP + 0.16, -0.3, -0.18, 'wood', { color: 0x3b2a1e, tag: 'knife-block' });
   spawners.push({ itemId: 'chef-knife', pos: [2.68, COUNTER_TOP + 0.17, -0.24], label: "Chef's knife" });
-  spawners.push({ itemId: 'herbs', pos: [1.55, COUNTER_TOP, -0.2], label: 'Herbs' });
+  spawners.push({ itemId: 'herbs', pos: [1.48, COUNTER_TOP, -0.25], label: 'Herbs' });
   spawners.push({ itemId: 'bell-pepper', pos: [1.7, COUNTER_TOP, -0.22], label: 'Bell pepper' });
   spawners.push({ itemId: 'broccoli', pos: [1.85, COUNTER_TOP, -0.22], label: 'Broccoli' });
   spawners.push({ itemId: 'mushroom', pos: [1.98, COUNTER_TOP, -0.22], label: 'Mushroom' });
   spawners.push({ itemId: 'garlic', pos: [2.08, COUNTER_TOP, -0.24], label: 'Garlic' });
   spawners.push({ itemId: 'tongs', pos: [2.3, COUNTER_TOP, -0.26], label: 'Tongs' });
   spawners.push({ itemId: 'probe-thermometer', pos: [2.48, COUNTER_TOP, -0.27], label: 'Probe thermometer' });
+  // Auto-cutter: wall-mounted steel hopper over a bowl (cutter blades in its floor).
+  const ac = { x0: 1.53, x1: 1.71, z0: -0.04, z1: 0.12, floor: 1.02, top: 1.15 };
+  box(ac.x0 - 0.01, ac.x1 + 0.01, COUNTER_TOP, ac.top, -0.105, -0.095, 'steel', { color: 0x9aa0a6, tag: 'cutter-mount' });
+  box(ac.x0, ac.x1, ac.floor, ac.floor + 0.01, -0.095, ac.z1, 'steel', { color: 0x6d7378, tag: 'cutter-floor' });
+  box(ac.x0, ac.x0 + 0.008, ac.floor, ac.top, -0.095, ac.z1, 'steel', { color: 0xb8bcc0 });
+  box(ac.x1 - 0.008, ac.x1, ac.floor, ac.top, -0.095, ac.z1, 'steel', { color: 0xb8bcc0 });
+  box(ac.x0, ac.x1, ac.floor, ac.top, ac.z1 - 0.008, ac.z1, 'steel', { color: 0xb8bcc0, tag: 'cutter-front' });
+  zones.push({ id: 'auto-cutter', kind: 'autoCutter', pos: [(ac.x0 + ac.x1) / 2, (ac.floor + ac.top) / 2 + 0.01, (ac.z0 + ac.z1) / 2 - 0.02], size: [ac.x1 - ac.x0, ac.top - ac.floor, ac.z1 + 0.095] });
+
   // Pot rack shelf above (cookware spawners).
   box(1.45, 2.75, 1.58, 1.6, WALL_Z, WALL_Z + 0.32, 'steel', { surface: 'all', tag: 'pot-shelf', color: 0x8d9296 });
   spawners.push({ itemId: 'cast-iron-pan', pos: [1.65, 1.6, -0.19], label: 'Cast-iron skillet' });
@@ -364,6 +373,7 @@ export const KITCHEN: KitchenLayout = {
     { itemId: 'steak', pos: [1.98, COUNTER_TOP + 0.07, 0.05] },
     { itemId: 'potato', pos: [2.18, COUNTER_TOP + 0.08, 0.06] },
     { itemId: 'chef-knife', pos: [2.05, COUNTER_TOP + 0.04, 0.24] },
+    { itemId: 'mixing-bowl', pos: [1.62, COUNTER_TOP + 0.01, 0.04] },
     { itemId: 'cast-iron-pan', pos: [3.0, COUNTER_TOP + 0.06, 0.15] },
     { itemId: 'stock-pot', pos: [3.4, COUNTER_TOP + 0.06, -0.14] },
     { itemId: 'plate', pos: [7.55, COUNTER_TOP + 0.02, 0.15] },

@@ -28,6 +28,7 @@ import { WaterSystem } from './world/water';
 import { LiquidSystem } from './world/liquids';
 import { ProbeSystem } from './world/probe';
 import { KnifeSystem } from './world/knife';
+import { AutoCutter } from './world/autoCutter';
 import { partVolume } from './world/shapes';
 import { zone } from './world/kitchenAppliances';
 import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
@@ -64,6 +65,7 @@ export class Game {
   readonly liquids: LiquidSystem;
   readonly probes: ProbeSystem;
   readonly knife: KnifeSystem;
+  readonly autoCutter: AutoCutter;
   private bagTimers = new Map<number, number>();
   private lastGameTime = 0;
   ready = false;
@@ -108,6 +110,7 @@ export class Game {
     this.liquids.floorAt = (x, y, z) => this.floorAt(x, y, z);
     this.probes = new ProbeSystem(this);
     this.knife = new KnifeSystem(this);
+    this.autoCutter = new AutoCutter(this);
     this.liquids.onSplash = (at, kg, kind) => this.juice.puddle(at, kg, kind === 'oil' ? [0.85, 0.65, 0.2] : [0.7, 0.8, 0.88], kind === 'oil' ? 920 : 1000);
     this.heat.liquidAt = (p) => {
       for (const k of this.liquids.all) {
@@ -338,6 +341,7 @@ export class Game {
       });
     this.liquids.frame(dt, lids);
     this.probes.frame();
+    this.autoCutter.frame();
     this.renderer.render(this.scene, this.camera);
     const held = this.grab.heldHandle !== null ? this.items.get(this.grab.heldHandle) : undefined;
     this.overlay.update(realDt, {

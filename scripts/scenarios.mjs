@@ -445,3 +445,40 @@ scenarios.knife = async ({ page, shot, game, wait, assert }) => {
   await wait(1500);
   await shot('knife-cuts');
 };
+
+scenarios.autocutter = async ({ page, shot, game, wait, assert }) => {
+  await game(() => window.__game.rig.focusOn({ x: 1.75, y: 1.4 }));
+  await settle(page);
+  const r = await game(() => {
+    const g = window.__game;
+    const ac = g.autoCutter;
+    const run = (n) => {
+      for (let i = 0; i < n; i++) g.physics.step();
+      g.physics.sync();
+    };
+    const pull = (modeIndex) => {
+      ac.modeIndex = modeIndex;
+      const p = g.spawn('potato', { x: ac.z.pos[0], y: 1.09, z: ac.z.pos[2] + 0.01 });
+      run(60);
+      ac.lever = 1;
+      ac.frame();
+      ac.lever = 0;
+      ac.frame();
+      run(240);
+      return ac.lastPieces;
+    };
+    const fries = pull(1);
+    const inBowl = [...g.items].filter(([, it]) => it.def.id === 'potato' && it.def.parts[0].kind === 'hull').filter(([h]) => {
+      const p = g.bodyPos(h);
+      return Math.hypot(p.x - 1.62, p.z - 0.04) < 0.13 && p.y < 1.0;
+    }).length;
+    const wedges = pull(2);
+    return { fries, inBowl, wedges };
+  });
+  console.log('     ' + JSON.stringify(r));
+  assert(r.fries > 20, 'fries mode makes lots of sticks');
+  assert(r.inBowl > r.fries * 0.7, 'pieces land in the bowl');
+  assert(r.wedges === 8, 'wedges mode makes 8 wedges');
+  await wait(1500);
+  await shot('auto-cutter');
+};
