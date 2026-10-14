@@ -227,6 +227,18 @@ export class LiquidSystem {
       if (k.c.vigor > 0.05 && !k.c.lid && Math.random() < k.c.vigor * dt * 25) this.puff(surf, r, 0xffffff, 1.8);
       if (k.c.vigor > 0.05 && k.c.lid && Math.random() < k.c.vigor * dt * 6) this.puff(new THREE.Vector3(t.x + r, rimTop, t.z), 0.02, 0xffffff, 1.4);
       if (k.c.smoke > 0 && Math.random() < k.c.smoke * dt * 30) this.puff(surf, r, 0x8a8a8a, 2.6);
+      if (k.c.splatter > 0.2 && Math.random() < k.c.splatter * dt * 10) {
+        this.puff(surf, r, 0xffffff, 0.8);
+        this.emit(surf, new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.9 + Math.random(), (Math.random() - 0.5) * 0.8), 'oil', 0.0004, k.c.T, k.handle);
+      }
+      if (k.c.spillOil > 0) {
+        const m = Math.min(k.c.spillOil, k.c.oil, 0.08 * dt);
+        k.c.spillOil -= m;
+        k.c.oil -= m;
+        this.emit(new THREE.Vector3(t.x + r * 0.95, rimTop, t.z), new THREE.Vector3(0.15, 0, 0), 'oil', m, k.c.T, k.handle);
+        if (k.c.oil <= 0) k.c.spillOil = 0;
+      }
+      this.updateFire(k, surf, r, dt);
       if (k.c.boilingOver && Math.random() < dt * 20) this.emit(new THREE.Vector3(t.x + r, rimTop, t.z), new THREE.Vector3(0.1, 0, 0), 'water', 0.002, 100, k.handle);
     }
 
@@ -321,6 +333,11 @@ export class LiquidSystem {
     return this.floorAt(p.x, p.y, p.z);
   }
 
+  /** Public puff emitter (fryer bubbles etc.). */
+  puffAt(at: THREE.Vector3, spread: number, color: number, life: number): void {
+    this.puff(at, spread, color, life);
+  }
+
   private puff(at: THREE.Vector3, spread: number, color: number, life: number): void {
     let p = this.puffs.find((q) => q.life <= 0);
     if (!p) {
@@ -348,6 +365,45 @@ export class LiquidSystem {
       (p.s.material as THREE.SpriteMaterial).opacity = a * 0.35;
       if (p.life <= 0) p.s.visible = false;
     }
+  }
+
+  private readonly fires = new Map<number, { group: THREE.Group; light: THREE.PointLight }>();
+  private updateFire(k: Container, surf: THREE.Vector3, r: number, dt: number): void {
+    let f = this.fires.get(k.handle);
+    if (!k.c.onFire) {
+      if (f) {
+        this.scene.remove(f.group);
+        this.fires.delete(k.handle);
+      }
+      return;
+    }
+    if (!f) {
+      const group = new THREE.Group();
+      for (let i = 0; i < 9; i++) {
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.18, 8), new THREE.MeshBasicMaterial({ color: i % 2 ? 0xff7a1a : 0xffc04a, transparent: true, opacity: 0.85, toneMapped: false }));
+        group.add(cone);
+      }
+      const light = new THREE.PointLight(0xff8a30, 3, 2.5, 1.5);
+      group.add(light);
+      this.scene.add(group);
+      f = { group, light };
+      this.fires.set(k.handle, f);
+    }
+    const now = performance.now() / 1000;
+    f.group.position.copy(surf);
+    f.group.children.forEach((c, i) => {
+      if (!(c instanceof THREE.Mesh)) return;
+      const a = (i / 9) * Math.PI * 2;
+      c.position.set(Math.cos(a) * r * 0.5, 0.08 + Math.abs(Math.sin(now * 11 + i)) * 0.05, Math.sin(a) * r * 0.5);
+      c.scale.set(1, 0.7 + Math.abs(Math.sin(now * 13 + i * 1.7)) * 0.9, 1);
+    });
+    f.light.intensity = 2.5 + Math.sin(now * 20) * 0.8;
+    if (Math.random() < dt * 30) this.puff(surf.clone().add(new THREE.Vector3(0, 0.2, 0)), r, 0x2a2a2a, 3);
+  }
+
+  /** Any burning pots (fire alarm). */
+  get fireCount(): number {
+    return this.fires.size;
   }
 
   /** Any smoking oil in the kitchen (smoke alarm). */

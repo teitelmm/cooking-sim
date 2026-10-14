@@ -304,9 +304,9 @@ counter(1.4, 2.8);
 
 // ---------------------------------------------------------------- 5. deep fryer (4.6 – 5.2)
 {
-  counter(4.6, 5.2, { x0: 4.74, x1: 5.06, z0: -0.2, z1: 0.14, depth: 0.26, wallMaterial: 'steel', wallColor: 0x9ea3a8 });
+  counter(4.6, 5.2, { x0: 4.79, x1: 5.01, z0: -0.17, z1: 0.07, depth: 0.26, wallMaterial: 'steel', wallColor: 0x9ea3a8 });
   box(4.66, 5.14, COUNTER_TOP, COUNTER_TOP + 0.12, WALL_Z, -0.24, 'steel', { color: 0x8e9398, tag: 'fryer-back' });
-  zones.push({ id: 'fryer', kind: 'fryer', pos: [4.9, COUNTER_TOP - 0.13, -0.03], size: [0.3, 0.24, 0.32] });
+  zones.push({ id: 'fryer', kind: 'fryer', pos: [4.9, COUNTER_TOP - 0.13, -0.05], size: [0.2, 0.24, 0.22] });
   spawners.push({ itemId: 'fry-basket', pos: [4.9, COUNTER_TOP + 0.12, -0.3], label: 'Fry basket' });
 }
 

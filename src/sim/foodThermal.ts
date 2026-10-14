@@ -200,6 +200,12 @@ export class FoodThermal {
   readonly spiceBurn: Float32Array;
   /** Burn sensitivity of the spices on this food (1 = black pepper, 2 = garlic powder). */
   spiceSens = 1;
+  /** Fried crust thickness per face, mm (crisp layer of dehydrated, gelatinized starch). */
+  readonly fryCrust: Float32Array;
+  /** Thickest crust each face ever had (marks it as a fried surface). */
+  readonly fryMax: Float32Array;
+  /** Oil soaked up, kg. */
+  oilAbsorbed = 0;
   /** Heat drawn from the contact surface / surrounding fluid since last reset, J (for pans, oil, baths). */
   contactHeat = 0;
   fluidHeat = 0;
@@ -342,6 +348,8 @@ export class FoodThermal {
     this.saltAge = new Float32Array(this.faceCount);
     this.spice = new Float32Array(this.faceCount);
     this.spiceBurn = new Float32Array(this.faceCount);
+    this.fryCrust = new Float32Array(this.faceCount);
+    this.fryMax = new Float32Array(this.faceCount);
     this.areaScale = opts.areaScale ?? FoodThermal.trueArea(props.shape, size) / voxelArea;
 
     const alpha = ((1 + VAPOR_K) * props.k) / (props.rho * props.cp);
@@ -589,6 +597,19 @@ export class FoodThermal {
       if (hc > 0) this.contactHeat += hc * (env.contactT - Ts) * area * dt;
       this.fluidHeat += hv * (env.fluidT - Ts) * area * dt;
 
+      // Frying: a dry face in hot oil builds a crisp crust — fast only where the starch is already
+      // gelatinized (that's why blanch-then-fry beats one long fry). It soaks up a little oil as it goes.
+      if (env.medium === 'oil' && !wet && props.starch) {
+        const gel = this.starch[c];
+        // A blanched-then-rested surface has a set starch skin that re-crisps fast on the second fry.
+        const skin = this.fryMax[f] > 0.05 && this.fryCrust[f] < this.fryMax[f] * 1.5 ? 2.2 : 1;
+        this.fryCrust[f] += dt * 0.0035 * (0.08 + 0.92 * gel * gel * gel) * skin * Math.exp((Ts - 160) / 35);
+        this.oilAbsorbed += dt * 1.2e-3 * area * Math.exp((Ts - 160) / 40);
+        this.fryMax[f] = Math.max(this.fryMax[f], this.fryCrust[f]);
+      } else if (env.medium !== 'oil' && this.fryCrust[f] > 0) {
+        // Out of the oil, interior moisture creeps back into the crust: it softens over minutes.
+        this.fryCrust[f] = Math.max(0, this.fryCrust[f] - dt * 0.0006 * (this.w[c] / this.w0c[c]));
+      }
       if (!wet || Ts > BOIL_C) {
         const dryness = wet ? 0.3 : 1;
         // Maillard + sugar caramelization (onions, carrots, garlic go deep brown above ~320 °F).
@@ -652,7 +673,7 @@ export class FoodThermal {
         const k = 1.2e-5 * Math.exp((t - 70) / 8);
         this.collagen[c] *= Math.exp(-k * dt);
       }
-      if (props.starch && t > 58 && this.w[c] > 0.4 * w0cell) {
+      if (props.starch && t > 58 && this.w[c] > 0.15 * w0cell) {
         const k = 6.8e-4 * Math.exp((t - 80) / 6);
         this.starch[c] += (1 - this.starch[c]) * (1 - Math.exp(-k * dt));
       }
@@ -796,7 +817,9 @@ export class FoodThermal {
       const c = this.faceCell[f];
       const dry = this.crust[f] < 0.25 * this.crustMax ? 1 : 0.3;
       const gel = this.props.starch ? 0.3 + 0.7 * this.starch[c] : 1;
-      s += Math.min(this.brown[f] / 0.8, 1) * dry * gel * (1 - this.charred[f] * 0.5);
+      const roast = Math.min(this.brown[f] / 0.8, 1) * dry * gel * (1 - this.charred[f] * 0.5);
+      const fried = Math.min(this.fryCrust[f] / 0.5, 1) * (1 - this.charred[f] * 0.5);
+      s += this.fryMax[f] > 0.05 ? fried : roast;
       n++;
     }
     return n ? s / n : 0;

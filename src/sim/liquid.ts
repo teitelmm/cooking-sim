@@ -54,6 +54,12 @@ export class Contents {
   steamRate = 0;
   /** Heat drawn by food sitting in the liquid this step, J. */
   load = 0;
+  /** A flame is licking the pan (gas burner on) — needed for oil at its flash point to ignite. */
+  flameExposed = false;
+  onFire = false;
+  /** Splatter intensity (decays) and oil to throw over the rim (boil-over), kg. */
+  splatter = 0;
+  spillOil = 0;
 
   constructor(
     /** Inner floor area, m², and inner wall height, m. */
@@ -92,6 +98,13 @@ export class Contents {
   /** Mix in liquid at temperature T. */
   add(kind: LiquidKind, kg: number, T: number = ROOM_C): void {
     if (kg <= 0) return;
+    // Water into hot oil flashes to steam: violent spattering, and on a grease fire an eruption.
+    if (kind === 'water' && this.oil > 0.02 && this.T > 140) {
+      this.splatter = Math.min(5, this.splatter + kg * 200);
+      if (this.onFire || this.fill > 0.6) this.spillOil += Math.min(this.oil * 0.3, kg * 8);
+      this.T -= (kg * (4186 * (100 - T) + 2.26e6)) / Math.max(this.heatCapacity, 1);
+      return; // it boils away immediately
+    }
     const C0 = this.heatCapacity;
     const C1 = kg * LIQUIDS[kind].cp;
     if (kind === 'water') this.water += kg;
@@ -176,6 +189,13 @@ export class Contents {
       this.smoke = 0;
       this.atFlashPoint = false;
     }
+    // Grease fire: oil at its flash point over an open flame ignites; a lid smothers it; it burns the oil.
+    if (this.atFlashPoint && this.flameExposed && !this.lid) this.onFire = true;
+    if (this.onFire) {
+      if (this.lid || this.oil < 0.005) this.onFire = false;
+      else this.oil = Math.max(0, this.oil - 0.0015 * dt);
+    }
+    this.splatter = Math.max(0, this.splatter - dt * 0.6);
     return fromPan;
   }
 }

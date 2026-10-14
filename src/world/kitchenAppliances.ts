@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { AirFryer, Burner, Griddle, Grill, Oven, SousVide, type OvenMode } from '../sim/appliances';
+import { DeepFryer, FRYER } from '../sim/fryer';
 import { AIR_FRYER, GRIDDLE, OVEN, SOUS_VIDE } from '../data/appliances';
 import { cToF, fToC } from '../sim/units';
 import { RAPIER, type BodyEntry, type PhysicsWorld } from '../engine/physics';
@@ -74,6 +75,10 @@ export class KitchenAppliances {
   readonly oven = new Oven('oven');
   readonly airFryer = new AirFryer('air-fryer');
   readonly sousVide = new SousVide('sous-vide');
+  readonly fryer = new DeepFryer('fryer');
+  readonly fryerOil: THREE.Mesh;
+  /** Displaced fryer oil surface (set by the game's water system). */
+  fryerVolume: { level: number } | null = null;
   readonly controls = new Controls();
   readonly ovenDoor: Hinge;
   readonly grillLid: Hinge;
@@ -230,6 +235,28 @@ export class KitchenAppliances {
     this.afLight.position.set(5.65, 1.2, 0.064);
     scene.add(this.afLight);
 
+    // ---- deep fryer: oil surface, temp knob, power button, readout on the back panel
+    const fz = zone('fryer');
+    this.fryerOil = new THREE.Mesh(
+      new THREE.PlaneGeometry(fz.size[0] - 0.02, fz.size[2] - 0.02).rotateX(-Math.PI / 2),
+      new THREE.MeshStandardMaterial({ color: 0xd9a531, roughness: 0.08, metalness: 0, transparent: true, opacity: 0.85 }),
+    );
+    this.fryerOil.position.set(fz.pos[0], this.fryerLevel, fz.pos[2]);
+    scene.add(this.fryerOil);
+    const fd = new Display(0.09, 0.04, '#ffcf5a');
+    fd.mesh.position.set(4.9, 0.985, -0.238);
+    scene.add(fd.mesh);
+    this.displays.push({ d: fd, text: () => [`${Math.round(cToF(this.fryer.oil.T))}°F`, this.fryer.on ? `set ${Math.round(cToF(this.fryer.setC))}` : 'off'] });
+    this.addKnob(
+      new THREE.Vector3(4.76, 0.97, -0.232),
+      () => (cToF(this.fryer.setC) - FRYER.minF) / (FRYER.maxF - FRYER.minF),
+      (v) => (this.fryer.setC = fToC(Math.round((FRYER.minF + (FRYER.maxF - FRYER.minF) * v) / 5) * 5)),
+      'Fryer temp',
+      undefined,
+      0.016,
+    );
+    this.addButton(new THREE.Vector3(5.04, 0.97, -0.237), '⏻', () => (this.fryer.on = !this.fryer.on), 0.03);
+
     // ---- sous vide: water, circulator display, knob, power button
     const svz = zone('sous-vide');
     this.sousVideWater = new THREE.Mesh(
@@ -248,6 +275,11 @@ export class KitchenAppliances {
     this.svLight = new THREE.Mesh(new THREE.CircleGeometry(0.004, 12), glowMat(0x7ad7ff));
     this.svLight.position.set(6.335, 1.235, -0.0975);
     scene.add(this.svLight);
+  }
+
+  /** Fryer oil surface height (undisplaced). */
+  get fryerLevel(): number {
+    return COUNTER_TOP - 0.26 + this.fryer.oil.level;
   }
 
   /** Sous vide water surface height. */
@@ -286,6 +318,7 @@ export class KitchenAppliances {
     this.oven.step(dt);
     this.airFryer.step(dt);
     this.sousVide.step(dt);
+    this.fryer.step(dt);
   }
 
   /** Visuals (real time). */
@@ -313,6 +346,8 @@ export class KitchenAppliances {
     (this.afLight.material as THREE.MeshStandardMaterial).emissiveIntensity = this.airFryer.heating ? 2 : this.airFryer.running ? 0.6 : 0;
     (this.svLight.material as THREE.MeshStandardMaterial).emissiveIntensity = this.sousVide.on ? (this.sousVide.firing() ? 2 : 0.7) : 0;
     this.sousVideWater.position.y = this.sousVideVolume?.level ?? this.sousVideLevel;
+    this.fryerOil.position.y = (this.fryerVolume?.level ?? this.fryerLevel) + 0.001;
+    this.fryerOil.visible = this.fryer.oil.oil > 0.05;
     for (const { d, text } of this.displays) d.show(text());
   }
 

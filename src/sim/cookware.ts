@@ -70,7 +70,10 @@ export class Cookware {
     const loss = this.spec.outerArea * this.ambientH * (this.T - this.ambientC) + radiation(this.spec.outerArea, this.spec.emissivity, this.T) - (this.ambientC > ROOM_C + 5 ? radiation(this.spec.outerArea, this.spec.emissivity, this.ambientC) : 0);
     this.T += ((flame + this.externalW - loss) * dt - this.load) / this.heatCapacity;
     this.load = 0;
-    if (this.contents) this.T -= this.contents.step(dt, this.T, this.heatCapacity) / this.heatCapacity;
+    if (this.contents) {
+      this.contents.flameExposed = !!this.burner && this.burner.spec.fuel === 'gas' && this.burner.power > 50;
+      this.T -= this.contents.step(dt, this.T, this.heatCapacity) / this.heatCapacity;
+    }
     // Hot spot relaxes toward flame/spread with the pan's lateral time constant.
     const target = flame / this.spec.spread;
     const tau = this.heatCapacity / (this.spec.spread * 8);

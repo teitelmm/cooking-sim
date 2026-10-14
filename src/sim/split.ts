@@ -135,6 +135,8 @@ function piece(parent: FoodItem, n: V3, d: number): FoodItem | null {
         ct.saltAge[f] = pt.saltAge[pf];
         ct.spice[f] = pt.spice[pf];
         ct.spiceBurn[f] = pt.spiceBurn[pf];
+        ct.fryCrust[f] = pt.fryCrust[pf];
+        ct.fryMax[f] = pt.fryMax[pf];
         continue;
       }
     }

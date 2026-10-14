@@ -31,7 +31,7 @@ import { KnifeSystem } from './world/knife';
 import { AutoCutter } from './world/autoCutter';
 import { PantryActions } from './world/pantryActions';
 import { partVolume } from './world/shapes';
-import { zone } from './world/kitchenAppliances';
+import { inZone, zone } from './world/kitchenAppliances';
 import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
 import { KITCHEN } from './world/kitchenLayout';
 import { buildKitchenColliders, buildKitchenVisuals, KitchenLights } from './world/kitchenBuilder';
@@ -104,6 +104,17 @@ export class Game {
       baseLevel: () => this.appliances.sousVideLevel,
       density: 1000,
     });
+    const fz = zone('fryer');
+    this.appliances.fryerVolume = this.water.add({
+      id: 'fryer',
+      cx: fz.pos[0],
+      cz: fz.pos[2],
+      hx: fz.size[0] / 2,
+      hz: fz.size[2] / 2,
+      floorY: KITCHEN.counterTop - 0.26,
+      baseLevel: () => this.appliances.fryerLevel,
+      density: 920,
+    });
     this.renderer.domElement.addEventListener('dblclick', (e) => this.onDoubleClick(e));
     const faucetHit = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.36, 0.22), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
     faucetHit.position.set(7.0, KITCHEN.counterTop + 0.17, -0.2);
@@ -124,6 +135,8 @@ export class Game {
       return null;
     };
     this.heat.liquidAt = (p) => {
+      const fzz = zone('fryer');
+      if (inZone(fzz, p) && p.y < (this.appliances.fryerVolume?.level ?? this.appliances.fryerLevel) && this.appliances.fryer.oil.oil > 0.05) return this.appliances.fryer.oil;
       for (const k of this.liquids.all) {
         if (k.c.kg < 0.01 || k.pan.id === 'oil-bottle') continue;
         const t = this.physics.entries.get(k.handle)?.body.translation();
@@ -353,6 +366,7 @@ export class Game {
       });
     this.liquids.frame(dt, lids);
     this.probes.frame();
+    this.fryerBubbles(dt);
     this.autoCutter.frame();
     this.pantry.frame(dt);
     this.renderer.render(this.scene, this.camera);
@@ -456,6 +470,20 @@ export class Game {
     let o: THREE.Object3D | null = hit.object;
     while (o && o.userData.bodyHandle === undefined) o = o.parent;
     if (o) this.unwrap(o.userData.bodyHandle as number);
+  }
+
+  /** Food frying in the deep fryer boils off its water: bubbles and steam at the oil surface. */
+  private fryerBubbles(dt: number): void {
+    const fz = zone('fryer');
+    const oil = this.appliances.fryer.oil;
+    if (oil.T < 110) return;
+    const level = this.appliances.fryerVolume?.level ?? this.appliances.fryerLevel;
+    for (const [h, f] of this.sim.foods) {
+      const p = this.physics.entries.get(h)?.body.translation();
+      if (!p || !inZone(fz, p) || p.y > level) continue;
+      const wet = Math.min(f.thermal.crustWater() / Math.max(f.thermal.crustMax, 1e-6), 1);
+      if (Math.random() < dt * 40 * (0.2 + wet)) this.liquids.puffAt(new THREE.Vector3(p.x, level + 0.004, p.z), 0.03, 0xffffff, 0.5 + wet);
+    }
   }
 
   /** Run the cooking sim (appliances, cookware, food) forward by game seconds without rendering. */

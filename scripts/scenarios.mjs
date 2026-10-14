@@ -582,3 +582,88 @@ scenarios.spices = async ({ game, assert }) => {
   console.log('     ' + JSON.stringify(r));
   assert((r.pepper ?? 0) > 0.0002, 'shaking pepper over the steak seasons it');
 };
+
+scenarios.frying = async ({ page, shot, game, wait, assert }) => {
+  const r = await game(() => {
+    const g = window.__game;
+    const run = (n) => {
+      for (let i = 0; i < n; i++) g.physics.step();
+      g.physics.sync();
+    };
+    const fr = g.appliances.fryer;
+    fr.on = true;
+    fr.setC = ((350 - 32) * 5) / 9;
+    g.fastForward(20 * 60);
+    const hot = fr.oil.T;
+    // Fries from the auto-cutter.
+    const ac = g.autoCutter;
+    ac.modeIndex = 1;
+    g.spawn('potato', { x: ac.z.pos[0], y: 1.09, z: ac.z.pos[2] + 0.01 });
+    run(60);
+    ac.cut();
+    run(120);
+    const fries = [...g.items].filter(([, it]) => it.def.id === 'potato' && it.def.parts[0].kind === 'hull').map(([h]) => h);
+    // Basket into the oil, fries into the basket.
+    const basket = g.spawn('fry-basket', { x: 4.9, y: 0.68, z: -0.05 });
+    run(60);
+    fries.forEach((h, i) => {
+      const b = g.physics.entries.get(h).body;
+      b.setTranslation({ x: 4.82 + (i % 7) * 0.022, y: 0.7 + Math.floor(i / 21) * 0.02, z: -0.14 + (Math.floor(i / 7) % 3) * 0.04 }, true);
+      b.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    });
+    run(120);
+    let minT = fr.oil.T;
+    for (let s = 0; s < 36; s++) {
+      g.fastForward(5);
+      minT = Math.min(minT, fr.oil.T);
+      run(4);
+    }
+    const fs = fries.map((h) => g.sim.foods.get(h)).filter(Boolean);
+    const avg = (fn) => fs.reduce((a, f) => a + fn(f), 0) / fs.length;
+    const F = (c) => (c * 9) / 5 + 32;
+    return { hotF: F(hot), minF: F(minT), nowF: F(fr.oil.T), browning: avg((f) => f.thermal.browning()), crisp: avg((f) => f.thermal.crispness()), basket: !!basket };
+  });
+  console.log('     ' + JSON.stringify(r));
+  assert(r.hotF > 345, 'fryer preheated to 350');
+  assert(r.hotF - r.minF > 5, `oil temp dipped when the fries went in (${(r.hotF - r.minF).toFixed(0)} °F)`);
+  assert(r.browning > 0.2, 'fries are browning');
+  await game(() => window.__game.rig.focusOn({ x: 4.9, y: 1.38 }));
+  await settle(page);
+  await wait(1500);
+  await shot('deep-fryer');
+  // Grease fire in a pan, then smother with a lid.
+  const f = await game(() => {
+    const g = window.__game;
+    const pan = g.spawn('stainless-pan', { x: 3.4, y: 0.95, z: 0.15 });
+    for (let i = 0; i < 60; i++) g.physics.step();
+    const c = g.liquids.contentsOf(pan.entry.body.handle);
+    c.add('oil', 0.12);
+    g.appliances.burners[3].knob = 1;
+    let t = 0;
+    while (!c.onFire && t < 1800) {
+      g.fastForward(5);
+      t += 5;
+    }
+    for (let i = 0; i < 30; i++) g.liquids.frame(1 / 30, []);
+    window.__firePan = pan.entry.body.handle;
+    return { onFire: c.onFire, minutes: t / 60 };
+  });
+  console.log('     ' + JSON.stringify(f));
+  assert(f.onFire, 'overheated oil on a gas flame catches fire');
+  await game(() => window.__game.rig.focusOn({ x: 3.3, y: 1.42 }));
+  await settle(page);
+  await wait(1500);
+  await shot('grease-fire');
+  const out = await game(() => {
+    const g = window.__game;
+    const p = g.bodyPos(window.__firePan);
+    const lid = g.spawn('pot-lid', { x: p.x, y: p.y + 0.05, z: p.z });
+    for (let i = 0; i < 90; i++) g.physics.step();
+    g.physics.sync();
+    const lids = [{ handle: lid.entry.body.handle, pos: g.bodyPos(lid.entry.body.handle), up: { x: 0, y: 1, z: 0 } }];
+    g.liquids.frame(1 / 30, lids);
+    g.fastForward(2);
+    return g.liquids.contentsOf(window.__firePan).onFire;
+  });
+  assert(out === false, 'a lid smothers the fire');
+};

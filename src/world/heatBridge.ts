@@ -182,10 +182,17 @@ export class HeatBridge {
     } else if (liquid) {
       // In a pot of water (simmering/boiling) or a pan/pot of oil (frying).
       fluid = liquid;
+      if (liquid.kind === 'oil' && this.lastFluid.get(h) !== liquid && liquid.T > 140) {
+        // Wet food into hot oil spatters; a very full pot can foam over.
+        const wetness = Math.min(t.crustWater() / Math.max(t.crustMax, 1e-6), 1.5);
+        const hit = wetness * t.mass() * 8;
+        liquid.splatter = Math.min(5, liquid.splatter + hit);
+        if (liquid.fill > 0.75 && hit > 1) liquid.spillOil += Math.min(liquid.oil * 0.05, 0.05 * hit);
+      }
       const oil = liquid.kind === 'oil';
       const wet = t.crustWater() > t.crustMax * 0.2;
-      const h = oil ? (wet ? H.fry : 220) : liquid.vigor > 0.5 ? H.boil : liquid.vigor > 0.1 ? H.simmer : 300;
-      const env: FaceEnv = { medium: oil ? 'oil' : e.data.bagged ? 'bag' : 'water', fluidT: liquid.T, fluidH: h, contactT: liquid.T, contactH: 0, contactFrac: 0, radT: liquid.T, radView: 0 };
+      const hl = oil ? (wet ? H.fry : 220) : liquid.vigor > 0.5 ? H.boil : liquid.vigor > 0.1 ? H.simmer : 300;
+      const env: FaceEnv = { medium: oil ? 'oil' : e.data.bagged ? 'bag' : 'water', fluidT: liquid.T, fluidH: hl, contactT: liquid.T, contactH: 0, contactFrac: 0, radT: liquid.T, radView: 0 };
       for (let d = 0; d < 6; d++) envs.push(env);
     } else if (inZone(this.zSous, centerW) && centerW.y < (a.sousVideVolume?.level ?? a.sousVideLevel)) {
       fluid = 'sousVide';
