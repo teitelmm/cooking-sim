@@ -1099,3 +1099,96 @@ scenarios.stress = async ({ page, shot, game, wait, assert }) => {
   assert(cpu1 < 8, 'CPU work fits a 60 FPS budget at 1×');
   assert(cpu20 < 16, 'CPU work fits a 60 FPS budget at 20× (sim time-scaled)');
 };
+
+/** Raw food close-up (procedural surface detail), then a few cooked to check sear/char still read. */
+scenarios.foods = async ({ page, shot, game, wait, assert }) => {
+  const shaderErrors = [];
+  page.on('console', (m) => {
+    if (/Shader Error|ERROR: 0:|Program Info Log/i.test(m.text())) shaderErrors.push(m.text().slice(0, 400));
+  });
+  await wait(800);
+  const ids = ['steak', 'chicken-breast', 'chicken-thigh', 'potato', 'carrot', 'onion', 'bell-pepper', 'broccoli', 'mushroom', 'garlic', 'egg', 'herbs', 'butter', 'ribs'];
+  await game((list) => {
+    const g = window.__game;
+    for (const [h, it] of [...g.items]) if (g.sim.foods.has(h) || it.def.id === 'cutting-board') g.despawn(h);
+    list.forEach((id, i) => {
+      const row = i < 7 ? 0 : 1;
+      g.spawn(id, { x: 1.97 + (i % 7) * 0.13, y: 0.97, z: row ? -0.06 : 0.14 });
+    });
+    for (let i = 0; i < 240; i++) g.physics.step();
+    g.physics.sync();
+    g.rig.focusOn({ x: 2.36, y: 1.3 });
+  }, ids);
+  await settle(page);
+  await wait(2500);
+  await shot('foods-raw');
+  // Zoomed in (narrow FOV) to inspect the detail up close.
+  const zoom = async (fov, name, at) => {
+    await game(
+      ([f, a]) => {
+        const g = window.__game;
+        g.camera.fov = f;
+        g.camera.updateProjectionMatrix();
+        if (a) g.rig.focusOn(a);
+      },
+      [fov, at],
+    );
+    if (at) await settle(page);
+    await wait(2500);
+    await shot(name);
+  };
+  await zoom(16, 'foods-raw-zoom-a', { x: 2.12, y: 1.48 });
+  await zoom(16, 'foods-raw-zoom-b', { x: 2.6, y: 1.48 });
+  await zoom(50, 'foods-reset', { x: 2.36, y: 1.3 });
+  // Sear the steak and potato; char a carrot.
+  await game(() => {
+    const g = window.__game;
+    const find = (id) => [...g.items].find(([, it]) => it.def.id === id)[0];
+    window.__debug.searFood(g.sim.foods.get(find('steak')));
+    window.__debug.searFood(g.sim.foods.get(find('potato')));
+    for (const v of g.foodViews.values()) v.update(10);
+  });
+  await wait(2500);
+  await shot('foods-seared');
+  await zoom(16, 'foods-seared-zoom', { x: 2.2, y: 1.48 });
+  await zoom(50, 'foods-reset', { x: 2.36, y: 1.3 });
+  assert(shaderErrors.length === 0, 'food shaders compile: ' + shaderErrors.join(' | '));
+};
+
+/** A/D tilt the held item counterclockwise / clockwise as seen on screen. */
+scenarios.tilt = async ({ page, game, wait, assert }) => {
+  await wait(1200);
+  const s = await game(() => window.__game.screenOf('steak'));
+  assert(s, 'steak on screen');
+  // Pick it up and hold it still in the air.
+  await page.mouse.move(s.x, s.y);
+  await page.mouse.down();
+  await page.mouse.move(s.x, s.y - 60, { steps: 6 });
+  await wait(1500);
+  /** Roll angle on screen (counterclockwise +) of the item's local +x: of the hand's target, or the body. */
+  const roll = (target) =>
+    game((useTarget) => {
+      const g = window.__game;
+      const r = useTarget ? g.grab.grab.targetRot : g.physics.entries.get(g.grab.heldHandle).body.rotation();
+      const q = g.camera.quaternion.clone().set(r.x, r.y, r.z, r.w);
+      const v = g.camera.up.clone().set(1, 0, 0).applyQuaternion(q).applyQuaternion(g.camera.quaternion.clone().invert());
+      return Math.atan2(v.y, v.x);
+    }, target);
+  const t0 = await roll(true);
+  const b0 = await roll(false);
+  await page.keyboard.down('a');
+  await wait(3000);
+  await page.keyboard.up('a');
+  const t1 = await roll(true);
+  await wait(1500);
+  const b1 = await roll(false);
+  await page.keyboard.down('d');
+  await wait(3000);
+  await page.keyboard.up('d');
+  const t2 = await roll(true);
+  await page.mouse.up();
+  console.log(`     hand roll: ${t0.toFixed(2)} → A ${t1.toFixed(2)} → D ${t2.toFixed(2)}; steak ${b0.toFixed(2)} → ${b1.toFixed(2)}`);
+  assert(t1 - t0 > 0.3, 'A tilts the held item counterclockwise on screen');
+  assert(t1 - t2 > 0.3, 'D tilts it back clockwise');
+  assert(b1 - b0 > 0.15, 'the steak itself follows the hand');
+};

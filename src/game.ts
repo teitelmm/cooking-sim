@@ -109,6 +109,7 @@ export class Game {
     bindResize(container, this.renderer, this.camera);
     this.input = new PointerRouter(this.renderer.domElement, this.camera, this.rig);
     this.grab = new GrabInteraction(this.physics, this.events, { minZ: KITCHEN.holdDepth[0], maxZ: KITCHEN.holdDepth[1], minY: 0.02 });
+    this.grab.viewAxis = () => this.camera.getWorldDirection(new THREE.Vector3()).negate();
     this.appliances = new KitchenAppliances(this.physics, this.scene);
     this.input.addPicker(this.appliances.controls.picker);
     this.input.addPicker(this.grab.picker);
@@ -376,6 +377,7 @@ export class Game {
     this.rig.update(dt);
     this.edgePan(dt);
     this.rig.applyTo(this.camera);
+    this.grab.frame(Math.min(realDt, 0.5));
     this.lights.follow(this.rig.x);
     this.loop.tick(realDt);
     this.physics.sync();

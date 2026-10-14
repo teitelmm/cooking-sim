@@ -77,6 +77,7 @@ function piece(parent: FoodItem, n: V3, d: number): FoodItem | null {
     areaScale: pt.areaScale,
     origin: [parent.origin[0] + center[0], parent.origin[1] + center[1], parent.origin[2] + center[2]],
     cuts,
+    seed: parent.seed,
   });
   const ct = child.thermal;
   if (ct.cellCount === 0) return null;

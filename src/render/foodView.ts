@@ -3,6 +3,8 @@ import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js'
 import type { FoodItem, Plane } from '../sim/food';
 import { crossSectionImage, planeBasis } from './crossSection';
 import { hex, surfaceColor, type RGB } from './foodColor';
+import { FOOD_DETAIL_GLSL, grainOnCut, patternFor } from './foodDetail';
+import { FRIDGE_C } from '../sim/units';
 
 type V3 = [number, number, number];
 
@@ -21,6 +23,8 @@ export class FoodView {
   private realTimer = 1;
   private capTimer = 0;
   private readonly raw: RGB;
+  /** Shared by the surface and the cut-face caps. */
+  private readonly detailUniforms: Record<string, THREE.IUniform>;
 
   constructor(
     readonly food: FoodItem,
@@ -43,7 +47,27 @@ export class FoodView {
     this.tex.unpackAlignment = 1;
 
     this.material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0 });
+    const pattern = patternFor(food.id, food.props);
+    // Reference raw surface color (same sRGB space as the voxel texture), to tell how cooked a spot looks.
+    // Raw look of the tissue most of the outside is (lean, fat, skin…).
+    const t0 = food.thermal;
+    const tissueCount = new Map<number, number>();
+    for (let f = 0; f < t0.faceCount; f++) {
+      const tis = t0.tissue[t0.faceCell[f]];
+      tissueCount.set(tis, (tissueCount.get(tis) ?? 0) + 1);
+    }
+    const mainTissue = [...tissueCount].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 0;
+    const rawSurf = surfaceColor(food.props, this.raw, FRIDGE_C, 0, 0, 1, 0, 0, mainTissue);
+    this.detailUniforms = {
+      uPattern: { value: pattern.kind },
+      uBump: { value: pattern.bump },
+      uDetailFreq: { value: pattern.freq },
+      uSeed: { value: food.seed },
+      uOrigin: { value: new THREE.Vector3(food.origin[0] - center[0], food.origin[1] - center[1], food.origin[2] - center[2]) },
+      uRaw: { value: new THREE.Vector3(...rawSurf.map((v) => v ** 2.2)) },
+    };
     const uniforms = {
+      ...this.detailUniforms,
       uSurf: { value: this.tex },
       uMin: { value: new THREE.Vector3(center[0] - food.size[0] / 2, center[1] - food.size[1] / 2, center[2] - food.size[2] / 2) },
       uSize: { value: new THREE.Vector3(...food.size) },
@@ -56,13 +80,45 @@ export class FoodView {
       shader.fragmentShader = shader.fragmentShader
         .replace(
           '#include <common>',
-          '#include <common>\nprecision highp sampler3D;\nuniform sampler3D uSurf;\nuniform vec3 uMin;\nuniform vec3 uSize;\nvarying vec3 vFoodPos;\nvec4 foodSample;',
+          `#include <common>
+precision highp sampler3D;
+uniform sampler3D uSurf;
+uniform vec3 uMin;
+uniform vec3 uSize;
+varying vec3 vFoodPos;
+vec4 foodSample;
+float fdHeight;
+float fdRoughAdd;
+${FOOD_DETAIL_GLSL}`,
         )
         .replace(
           '#include <color_fragment>',
-          '#include <color_fragment>\nfoodSample = texture(uSurf, clamp((vFoodPos - uMin) / uSize, 0.0, 1.0));\ndiffuseColor.rgb *= pow(foodSample.rgb, vec3(2.2));',
+          `#include <color_fragment>
+foodSample = texture(uSurf, clamp((vFoodPos - uMin) / uSize, 0.0, 1.0));
+vec3 fdBase = pow(foodSample.rgb, vec3(2.2));
+vec3 fdP = vFoodPos + uOrigin;
+float fdLum; vec3 fdTint; float fdTintAmt; float fdH; float fdRough;
+fdFw = max(length(dFdx(fdP)), length(dFdy(fdP)));
+fdLean = smoothstep(0.02, 0.12, fdBase.r - max(fdBase.g, fdBase.b));
+foodDetail(fdP, fdLum, fdTint, fdTintAmt, fdH, fdRough);
+// 1 = still looks raw, 0 = browned/cooked: raw-only touches (marbling, flour, skin tint) fade with it.
+float fdRaw = clamp(1.0 - length(fdBase - uRaw) / 0.25, 0.0, 1.0);
+// A browned crust gets its own fine, craggy texture.
+float fdCrust = (fd_fbm(fdP * 220.0 + 11.0) - 0.47) * fl(220.0);
+// Only dark, browned surfaces count as crust (a white fat cap that isn't the lean's raw color isn't cooked).
+float fdBrowned = (1.0 - fdRaw) * smoothstep(0.3, 0.06, dot(fdBase, vec3(0.2126, 0.7152, 0.0722)));
+float fdL = mix(1.0, fdLum, 0.45 + 0.55 * fdRaw) * (1.0 + 0.5 * fdCrust * fdBrowned);
+diffuseColor.rgb *= fdBase * fdL;
+vec3 fdTintCol = mix(pow(fdTint, vec3(2.2)), fdBase * 1.7 + vec3(0.03, 0.015, 0.0), 1.0 - fdRaw);
+diffuseColor.rgb = mix(diffuseColor.rgb, fdTintCol, clamp(fdTintAmt * (0.35 + 0.65 * fdRaw), 0.0, 1.0));
+fdHeight = fdH * (0.5 + 0.5 * fdRaw) + fdBrowned * 0.9 * fdCrust;
+fdRoughAdd = fdRough * fdRaw;`,
         )
-        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(0.82, 0.28, foodSample.a);');
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(mix(0.82, 0.28, foodSample.a) + fdRoughAdd, 0.06, 1.0);')
+        .replace(
+          '#include <normal_fragment_maps>',
+          '#include <normal_fragment_maps>\nnormal = fd_perturb(-vViewPosition, normal, vec2(dFdx(fdHeight), dFdy(fdHeight)) * uBump, faceDirection);',
+        );
     };
     this.material.customProgramCacheKey = () => 'food-surface';
 
@@ -192,6 +248,30 @@ export class FoodView {
     }
     const tex = new THREE.DataTexture(new Uint8Array(4), 1, 1);
     const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.35, metalness: 0, alphaTest: 0.5, transparent: false });
+    if (grainOnCut(this.detailUniforms.uPattern.value as number)) {
+      // Muscle fibers show on the cut face too (cut across the grain: fiber ends; along it: lines).
+      mat.onBeforeCompile = (shader) => {
+        Object.assign(shader.uniforms, this.detailUniforms);
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec3 vFoodPos;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFoodPos = position;');
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', `#include <common>\nvarying vec3 vFoodPos;\n${FOOD_DETAIL_GLSL}`)
+          .replace(
+            '#include <map_fragment>',
+            `#include <map_fragment>
+{
+  vec3 fdP = vFoodPos + uOrigin;
+  float fdLum; vec3 fdTint; float fdTintAmt; float fdH; float fdRough;
+  fdFw = max(length(dFdx(fdP)), length(dFdy(fdP)));
+  fdLean = 1.0;
+  foodDetail(fdP, fdLum, fdTint, fdTintAmt, fdH, fdRough);
+  diffuseColor.rgb *= mix(1.0, fdLum, 0.6);
+}`,
+          );
+      };
+      mat.customProgramCacheKey = () => 'food-cap-grain';
+    }
     const mesh = new THREE.Mesh(g, mat);
     mesh.castShadow = false;
     mesh.receiveShadow = true;
@@ -216,7 +296,6 @@ export class FoodView {
     mat.roughness = 0.75 - 0.45 * Math.min(this.food.thermal.freeJuice() / Math.max(this.food.thermal.mass() * 0.004, 1e-6), 1);
   }
 
-  /** Call every frame with game-time dt. Texture refresh is throttled. */
   /**
    * Refresh the surface texture every ~0.5 game-s, but no more than ~6×/s of real time (fast-forward) and
    * not at all while off screen (it catches up the moment it comes back into view).

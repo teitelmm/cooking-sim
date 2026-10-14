@@ -8,6 +8,8 @@ import type { SpawnerSlot } from '../world/kitchenLayout';
 
 /** Lift applied once the item starts moving, so it clears the surface it was resting on. */
 export const LIFT_HEIGHT = 0.08;
+/** A/D tilt speed while held, rad/s. */
+export const ROLL_RATE = 2.2;
 /** Pointer travel (m) before lift kicks in — a press-and-hold without moving doesn't hop the item. */
 const LIFT_AFTER = 0.01;
 
@@ -44,6 +46,11 @@ export class GrabInteraction {
   private lastInfo: PointerInfo | null = null;
   /** Hooks that may adjust a just-started grab (e.g. knife snaps blade-down). */
   readonly onGrab: ((handle: number, grab: GrabController) => void)[] = [];
+  /** A held = +1 (counterclockwise on screen), D = −1. */
+  private rollDir = 0;
+  private readonly rollKeys = new Set<string>();
+  /** Axis pointing from the scene toward the viewer (set by the game from the camera). */
+  viewAxis: () => THREE.Vector3 = () => new THREE.Vector3(0, 0, 1);
 
   constructor(
     private readonly physics: PhysicsWorld,
@@ -52,10 +59,33 @@ export class GrabInteraction {
   ) {
     physics.preStep.push((dt) => this.grab.step(dt));
     window.addEventListener('keydown', (e) => {
+      const k = e.key.toLowerCase();
+      if (k === 'a' || k === 'd') {
+        this.rollKeys.add(k);
+        this.updateRoll();
+      }
       if (this.heldHandle === null) return;
-      if (e.key === 'w' || e.key === 'W') this.push(-0.04);
-      if (e.key === 's' || e.key === 'S') this.push(0.04);
+      if (k === 'w') this.push(-0.04);
+      if (k === 's') this.push(0.04);
     });
+    window.addEventListener('keyup', (e) => {
+      this.rollKeys.delete(e.key.toLowerCase());
+      this.updateRoll();
+    });
+    window.addEventListener('blur', () => {
+      this.rollKeys.clear();
+      this.updateRoll();
+    });
+  }
+
+  private updateRoll(): void {
+    this.rollDir = (this.rollKeys.has('a') ? 1 : 0) - (this.rollKeys.has('d') ? 1 : 0);
+  }
+
+  /** Per frame: while A/D is held, tilt the held item about the view axis (as seen on screen). */
+  frame(dt: number): void {
+    if (this.heldHandle === null || !this.rollDir) return;
+    this.grab.rotate(this.viewAxis(), this.rollDir * ROLL_RATE * dt);
   }
 
   readonly picker: Picker = (p) => {

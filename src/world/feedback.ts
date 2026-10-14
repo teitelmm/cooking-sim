@@ -214,6 +214,7 @@ export class Feedback {
     else if (T !== null) lines.push(`${Math.round(cToF(T))}°F to the touch`);
     const gripped = g.tools.grip ? g.items.get(g.tools.grip.food) : undefined;
     if (gripped) lines.push(`holding ${gripped.def.name.toLowerCase()} — rotate to flip, Space to let go`);
+    lines.push('<span style="opacity:.7">A/D tilt · wheel spin · Shift+wheel flip · W/S depth</span>');
     g.hud.setHeld(lines.join('<br>'));
   }
 

@@ -55,13 +55,16 @@ export class FoodItem {
   readonly size: [number, number, number];
   /** Seasonings applied, kg by kind (flavor tags for the inspector). */
   readonly flavors: Record<string, number> = {};
+  /** Look seed (marbling, speckles): shared by every piece cut from the same whole food. */
+  readonly seed: number;
 
   constructor(
     readonly id: string,
     size: [number, number, number],
-    opts: FoodThermalOptions & { props?: FoodProps; origin?: [number, number, number]; cuts?: Plane[] } = {},
+    opts: FoodThermalOptions & { props?: FoodProps; origin?: [number, number, number]; cuts?: Plane[]; seed?: number } = {},
   ) {
     this.size = size;
+    this.seed = opts.seed ?? Math.floor(Math.random() * 1000);
     this.origin = opts.origin ?? [0, 0, 0];
     this.cuts = opts.cuts ?? [];
     const props = opts.props ?? FOODS[id];
