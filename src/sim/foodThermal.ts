@@ -94,9 +94,11 @@ const EMISSIVITY = 0.9;
 const SQUEEZE_TAU = 40;
 /** Share of the squeezed juice from surface cells that weeps out onto the surface. */
 const WEEP = 0.6;
+/** Share of interior squeeze that purges out to the surface. */
+const PURGE = 0.5;
 /** Evaporation–condensation boost to conductivity at 100 °C, and its e-folding scale (°C). */
-export const VAPOR_K = 2.5;
-export const VAPOR_K_SCALE = 12;
+export const VAPOR_K = 4;
+export const VAPOR_K_SCALE = 25;
 
 function vaporDensity(Tc: number): number {
   const psat = 610.78 * Math.exp((17.27 * Tc) / (Tc + 237.3));
@@ -111,14 +113,21 @@ export function browningRate(Ts: number): number {
   return 0.0064 * Math.exp((Ts - 150) / 18);
 }
 
-/** Charring rate, 1/s (1.0 = black). Needs a dry face held well above ~400 °F (205 °C). */
+/**
+ * Charring rate, 1/s (1.0 = black). Very temperature-sensitive: negligible below ~390 °F, real by
+ * ~415 °F (213 °C) — a face that keeps sitting on the pan creeps up there; a flipped face doesn't.
+ */
 export function charRate(Ts: number): number {
-  if (Ts < 175) return 0;
-  return 6.5e-4 * Math.exp((Ts - 200) / 11);
+  if (Ts < 185) return 0;
+  return 2.8e-3 * Math.exp((Ts - 213) / 5);
 }
 
 export interface FoodThermalOptions {
   initialT?: number;
+  /** Custom shape: is local point (m, grid-centered) inside the food? Used for cut pieces. */
+  inside?: (x: number, y: number, z: number) => boolean;
+  /** Override the stair-step surface correction (pieces inherit their parent's). */
+  areaScale?: number;
   /** Override grid resolution. */
   dims?: [number, number, number];
 }
@@ -158,6 +167,8 @@ export class FoodThermal {
   readonly brown: Float32Array;
   readonly charred: Float32Array;
   readonly surfT: Float32Array;
+  /** 1 where the face is a knife cut (not the food's original outside). */
+  readonly isCut: Uint8Array;
   readonly faceCount: number;
   /** How many cells in from the extreme plane of its direction each face sits (0 = outermost). */
   readonly faceLayer: Uint8Array;
@@ -179,8 +190,8 @@ export class FoodThermal {
   private readonly surfaceFaces: Uint8Array;
   /** Wept juice per cell waiting to be spread onto its faces, kg per face. */
   private readonly weep: Float32Array;
-  private readonly w0: number;
-  private readonly crustMax: number;
+  readonly w0: number;
+  readonly crustMax: number;
 
   constructor(
     readonly props: FoodProps,
@@ -205,13 +216,18 @@ export class FoodThermal {
           const v = ((j + 0.5) / this.ny) * 2 - 1;
           const s = ((k + 0.5) / this.nz) * 2 - 1;
           let inside = true;
-          if (props.shape === 'ellipsoid') inside = u * u + v * v + s * s <= 1.0001;
+          if (opts.inside) inside = opts.inside(u * size[0] * 0.5, v * size[1] * 0.5, s * size[2] * 0.5);
+          else if (props.shape === 'ellipsoid') inside = u * u + v * v + s * s <= 1.0001;
           else if (props.shape === 'cylinderX') inside = v * v + s * s <= 1.0001;
           if (inside) {
             this.mask[this.idx(i, j, k)] = 1;
             count++;
           }
         }
+    if (count === 0) {
+      this.mask[this.idx(this.nx >> 1, this.ny >> 1, this.nz >> 1)] = 1;
+      count = 1;
+    }
     this.cellCount = count;
 
     const T0 = opts.initialT ?? ROOM_C;
@@ -271,7 +287,8 @@ export class FoodThermal {
     this.brown = new Float32Array(this.faceCount);
     this.charred = new Float32Array(this.faceCount);
     this.surfT = new Float32Array(this.faceCount).fill(T0);
-    this.areaScale = FoodThermal.trueArea(props.shape, size) / voxelArea;
+    this.isCut = new Uint8Array(this.faceCount);
+    this.areaScale = opts.areaScale ?? FoodThermal.trueArea(props.shape, size) / voxelArea;
 
     const alpha = ((1 + VAPOR_K) * props.k) / (props.rho * props.cp);
     const [dx, dy, dz] = this.d;
@@ -300,6 +317,50 @@ export class FoodThermal {
     }
     const p = 1.6075; // Knud Thomsen ellipsoid approximation
     return 4 * Math.PI * (((a * b) ** p + (a * c) ** p + (b * c) ** p) / 3) ** (1 / p);
+  }
+
+  /** Cell containing local point (grid-centered metres), or −1 if outside the grid. */
+  cellAt(x: number, y: number, z: number): number {
+    const i = Math.floor((x / this.size[0] + 0.5) * this.nx);
+    const j = Math.floor((y / this.size[1] + 0.5) * this.ny);
+    const k = Math.floor((z / this.size[2] + 0.5) * this.nz);
+    if (i < 0 || j < 0 || k < 0 || i >= this.nx || j >= this.ny || k >= this.nz) return -1;
+    return this.idx(i, j, k);
+  }
+
+  /** Center of cell c in local coordinates. */
+  cellCenter(c: number): [number, number, number] {
+    const i = c % this.nx;
+    const j = Math.floor(c / this.nx) % this.ny;
+    const k = Math.floor(c / (this.nx * this.ny));
+    return [((i + 0.5) / this.nx - 0.5) * this.size[0], ((j + 0.5) / this.ny - 0.5) * this.size[1], ((k + 0.5) / this.nz - 0.5) * this.size[2]];
+  }
+
+  /** Trilinear sample of a per-cell field at a local point (ignores cells outside the food). */
+  sample(arr: Float32Array, x: number, y: number, z: number): number {
+    const fx = (x / this.size[0] + 0.5) * this.nx - 0.5;
+    const fy = (y / this.size[1] + 0.5) * this.ny - 0.5;
+    const fz = (z / this.size[2] + 0.5) * this.nz - 0.5;
+    const i0 = Math.floor(fx);
+    const j0 = Math.floor(fy);
+    const k0 = Math.floor(fz);
+    let sum = 0;
+    let wsum = 0;
+    for (let dk = 0; dk < 2; dk++)
+      for (let dj = 0; dj < 2; dj++)
+        for (let di = 0; di < 2; di++) {
+          const i = Math.min(Math.max(i0 + di, 0), this.nx - 1);
+          const j = Math.min(Math.max(j0 + dj, 0), this.ny - 1);
+          const k = Math.min(Math.max(k0 + dk, 0), this.nz - 1);
+          const c = this.idx(i, j, k);
+          if (!this.mask[c]) continue;
+          const w = (di ? fx - i0 : 1 - (fx - i0)) * (dj ? fy - j0 : 1 - (fy - j0)) * (dk ? fz - k0 : 1 - (fz - k0));
+          sum += arr[c] * w;
+          wsum += w;
+        }
+    if (wsum > 1e-6) return sum / wsum;
+    const c = this.cellAt(x, y, z);
+    return c >= 0 ? arr[c] : 0;
   }
 
   idx(i: number, j: number, k: number): number {
@@ -446,6 +507,7 @@ export class FoodThermal {
     this.weep.fill(0);
 
     // 3. Per-cell chemistry.
+    let purge = 0;
     const w0 = this.w0;
     const L = LATENT;
     for (let c = 0; c < this.N; c++) {
@@ -473,11 +535,21 @@ export class FoodThermal {
             const toSurface = out * WEEP;
             this.juice[c] += out - toSurface;
             this.weep[c] += (toSurface * this.cellMass) / n;
-          } else this.juice[c] += out;
+          } else {
+            // Interior purge: part of the squeezed juice migrates out to the surface (the steak "sweats").
+            this.juice[c] += out * (1 - PURGE);
+            purge += out * PURGE * this.cellMass;
+          }
         }
-        // Free juice thickens / redistributes as the meat rests below ~140 °F; hot juice stays mobile.
-        const tau = t < 60 ? 150 : t < 70 ? 400 : 1500;
-        this.juice[c] *= Math.exp(-dt / tau);
+        // Free juice thickens / redistributes as the meat rests below ~140 °F.
+        if (t < 66) {
+          this.juice[c] *= Math.exp(-dt / (t < 60 ? 400 : 900));
+        } else {
+          // Hot, tightly contracted meat can't hold it: it drains out (drips into the pan / evaporates).
+          const drained = this.juice[c] * (1 - Math.exp(-dt / 120));
+          this.juice[c] -= drained;
+          purge += drained * this.cellMass * 0.5;
+        }
       }
       if (this.collagen[c] > 0 && t > 55) {
         // Collagen → gelatin: hours at 160–200 °F (ribs: tender ≈ 195–203 °F internal).
@@ -498,6 +570,25 @@ export class FoodThermal {
         this.fat[c] -= melted;
         this.drippings += melted * this.cellMass * 0.5;
       }
+    }
+    if (purge > 0) this.spreadPurge(purge);
+  }
+
+  /**
+   * Spread purged juice (kg) onto the surface. Lying on something, it beads up on the face opposite the
+   * contact (juice pooling on top of a steak) and runs off the sides; free-standing, it covers all faces.
+   */
+  private spreadPurge(kg: number): void {
+    let contactDir = -1;
+    for (let d = 0; d < 6; d++) if (this.env[d].contactFrac > 0) contactDir = d;
+    const target = contactDir >= 0 ? contactDir ^ 1 : -1;
+    let area = 0;
+    for (let f = 0; f < this.faceCount; f++) if (target < 0 || this.faceDir[f] === target) area += this.faceArea(this.faceDir[f]);
+    if (area <= 0) return;
+    const perM2 = kg / (area * this.areaScale);
+    for (let f = 0; f < this.faceCount; f++) {
+      const dir = this.faceDir[f];
+      if ((target < 0 || dir === target) && this.env[dir].medium !== 'water') this.crust[f] += perM2;
     }
   }
 
@@ -563,6 +654,16 @@ export class FoodThermal {
   crustWater(dir?: number): number {
     return this.faceStat(this.crust, dir);
   }
+
+  /** Face index for (cell, dir), or −1. */
+  faceOf(c: number, dir: number): number {
+    if (!this.faceIndex) {
+      this.faceIndex = new Map();
+      for (let f = 0; f < this.faceCount; f++) this.faceIndex.set(this.faceCell[f] * 6 + this.faceDir[f], f);
+    }
+    return this.faceIndex.get(c * 6 + dir) ?? -1;
+  }
+  private faceIndex: Map<number, number> | null = null;
 
   /** Mean of a per-cell field over the food. */
   mean(arr: Float32Array): number {

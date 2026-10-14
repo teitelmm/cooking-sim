@@ -13,7 +13,15 @@ import { Audio } from './engine/audio';
 import { itemDef } from './data/items';
 import { FOODS } from './data/foods';
 import { FoodItem } from './sim/food';
-import { partsBounds } from './world/shapes';
+import { partsBounds, buildPartGeometry } from './world/shapes';
+import type { ItemDef } from './data/items';
+import { FoodView } from './render/foodView';
+import { JuiceSystem } from './render/juice';
+import { juiceColor } from './render/foodColor';
+import { juiceReleased, splitFood } from './sim/split';
+import type { Plane } from './sim/food';
+import { clipConvex, geometryPoints } from './world/convex';
+import { RAPIER } from './engine/physics';
 import { despawnItem, spawnItem, type SpawnedItem } from './world/itemFactory';
 import { KITCHEN } from './world/kitchenLayout';
 import { buildKitchenColliders, buildKitchenVisuals, KitchenLights } from './world/kitchenBuilder';
@@ -40,6 +48,9 @@ export class Game {
   readonly grab: GrabInteraction;
   readonly audio: Audio;
   readonly items = new Map<number, SpawnedItem>();
+  readonly foodViews = new Map<number, FoodView>();
+  readonly juice: JuiceSystem;
+  private lastGameTime = 0;
   ready = false;
   private last = performance.now();
 
@@ -59,23 +70,114 @@ export class Game {
     this.grab = new GrabInteraction(this.physics, this.events, { minZ: KITCHEN.holdDepth[0], maxZ: KITCHEN.holdDepth[1], minY: 0.02 });
     this.input.addPicker(this.grab.picker);
     this.audio = new Audio(this.events);
+    this.juice = new JuiceSystem(this.scene, (x, y, z) => this.floorAt(x, y, z));
     this.buildScene();
   }
 
   spawn(id: string, pos: { x: number; y: number; z: number }, rot?: THREE.Quaternion): SpawnedItem {
-    const item = spawnItem(this.physics, this.scene, itemDef(id), pos, rot);
-    this.items.set(item.entry.body.handle, item);
+    return this.spawnDef(itemDef(id), pos, rot);
+  }
+
+  /**
+   * Spawn an item from a definition. Foods get a sim FoodItem (fresh, or the given one for cut pieces)
+   * and a FoodView that renders its state.
+   */
+  spawnDef(
+    def: ItemDef,
+    pos: { x: number; y: number; z: number },
+    rot?: { x: number; y: number; z: number; w: number },
+    piece?: { food: FoodItem; hull: [number, number, number][] },
+  ): SpawnedItem {
+    const item = spawnItem(this.physics, this.scene, def, pos, rot);
+    const h = item.entry.body.handle;
+    this.items.set(h, item);
     this.grab.pickables.push(item.view);
-    this.spawnOrder.push(item.entry.body.handle);
-    if (FOODS[id]) {
-      const b = partsBounds(item.def.parts);
-      const food = new FoodItem(id, [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z]);
-      this.sim.addFood(item.entry.body.handle, food);
+    this.spawnOrder.push(h);
+    if (FOODS[def.id]) {
+      let food: FoodItem;
+      let center: [number, number, number];
+      if (piece) {
+        food = piece.food;
+        center = [0, 0, 0];
+        item.entry.data.hull = piece.hull;
+      } else {
+        const b = partsBounds(def.parts);
+        food = new FoodItem(def.id, [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z]);
+        center = [(b.max.x + b.min.x) / 2, (b.max.y + b.min.y) / 2, (b.max.z + b.min.z) / 2];
+      }
+      this.sim.addFood(h, food);
       item.entry.data.food = food;
+      item.entry.data.foodCenter = center;
+      this.foodViews.set(h, new FoodView(food, item.view, center, def.color ?? 0xaa5555, piece?.hull));
     }
+    this.events.emit('spawn', { body: h, itemId: def.id });
     this.enforceItemCap();
-    this.events.emit('spawn', { body: item.entry.body.handle, itemId: id });
     return item;
+  }
+
+  /**
+   * Cut a food item with a plane given in the item's local frame (n·p = d). The food's sim state is split
+   * cell-by-cell, both pieces become new physics bodies (convex hulls), and juice runs out of the cut.
+   * Returns the new body handles.
+   */
+  cutFood(handle: number, plane: Plane, separation = 0.004): number[] {
+    const it = this.items.get(handle);
+    const food = it?.entry.data.food as FoodItem | undefined;
+    if (!it || !food) return [];
+    const len = Math.hypot(...plane.n);
+    const n: [number, number, number] = [plane.n[0] / len, plane.n[1] / len, plane.n[2] / len];
+    const d = plane.d / len;
+    const center = it.entry.data.foodCenter as [number, number, number];
+    const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const foodPlane: Plane = { n, d: d - dot(n, center) };
+    const [A, B] = splitFood(food, foodPlane);
+    if (!A || !B) return [];
+
+    const pts = (it.entry.data.hull as [number, number, number][] | undefined) ?? it.def.parts.flatMap((p) => geometryPoints(buildPartGeometry(p)));
+    const body = it.entry.body;
+    const t = body.translation();
+    const r = body.rotation();
+    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+    const lv = body.linvel();
+    const av = body.angvel();
+    const nWorld = new THREE.Vector3(...n).applyQuaternion(q);
+
+    // Juice: how much runs out depends on free juice near the cut (rested meat releases less).
+    const juiceKg = juiceReleased(food, foodPlane);
+    const cutCenterLocal = new THREE.Vector3(center[0] + n[0] * foodPlane.d, center[1] + n[1] * foodPlane.d, center[2] + n[2] * foodPlane.d);
+    const cutWorld = cutCenterLocal.clone().applyQuaternion(q).add(new THREE.Vector3(t.x, t.y, t.z));
+    const peakAtCut = food.thermal.sample(food.thermal.peak, n[0] * foodPlane.d, n[1] * foodPlane.d, n[2] * foodPlane.d);
+
+    this.despawn(handle);
+    const out: number[] = [];
+    ([
+      [A, 1],
+      [B, -1],
+    ] as const).forEach(([P, sign]) => {
+      const clipped = clipConvex(pts, [n[0] * sign, n[1] * sign, n[2] * sign], d * sign);
+      if (clipped.length < 4) return;
+      const rel = [P.origin[0] - food.origin[0], P.origin[1] - food.origin[1], P.origin[2] - food.origin[2]];
+      const pc = new THREE.Vector3(center[0] + rel[0], center[1] + rel[1], center[2] + rel[2]);
+      const hull = clipped.map((p) => [p[0] - pc.x, p[1] - pc.y, p[2] - pc.z] as [number, number, number]);
+      const world = pc.clone().applyQuaternion(q).add(new THREE.Vector3(t.x, t.y, t.z)).addScaledVector(nWorld, (-sign * separation) / 2);
+      const def: ItemDef = { ...it.def, mass: Math.max(P.thermal.mass(), 0.002), parts: [{ kind: 'hull', points: hull }] };
+      const piece = this.spawnDef(def, world, q, { food: P, hull });
+      piece.entry.body.setLinvel({ x: lv.x - nWorld.x * sign * 0.03, y: lv.y, z: lv.z - nWorld.z * sign * 0.03 }, true);
+      piece.entry.body.setAngvel(av, true);
+      out.push(piece.entry.body.handle);
+    });
+    if (juiceKg > 0) this.juice.emit(cutWorld, new THREE.Vector3(0, -1, 0).addScaledVector(nWorld, 0.3), juiceKg, juiceColor(food.props, peakAtCut));
+    this.events.emit('cut', { body: handle, pieces: out });
+    return out;
+  }
+
+  /** Height of the first surface below (x, y, z), ignoring food items. */
+  floorAt(x: number, y: number, z: number): number {
+    const hit = this.physics.world.castRay(new RAPIER.Ray({ x, y: y + 0.02, z }, { x: 0, y: -1, z: 0 }), 3, true, undefined, undefined, undefined, undefined, (c) => {
+      const e = this.physics.bodyOfCollider(c.handle);
+      return !(e && e.data.food);
+    });
+    return hit ? y + 0.02 - hit.timeOfImpact : 0;
   }
 
   private buildScene(): void {
@@ -89,6 +191,10 @@ export class Game {
     this.grab.spawn = (slot) => this.spawn(slot.itemId, spawnPosition(slot)).entry.body.handle;
     for (const it of L.startItems) this.spawn(it.itemId, { x: it.pos[0], y: it.pos[1], z: it.pos[2] });
     this.rig.applyTo(this.camera);
+  }
+
+  get counterTop(): number {
+    return KITCHEN.counterTop;
   }
 
   /** Station the camera is centered on. */
@@ -115,6 +221,8 @@ export class Game {
     if (this.grab.heldHandle === handle) this.grab.end();
     despawnItem(this.physics, this.scene, handle);
     this.sim.removeFood(handle);
+    this.foodViews.get(handle)?.dispose();
+    this.foodViews.delete(handle);
     this.items.delete(handle);
     const i = this.grab.pickables.indexOf(it.view);
     if (i >= 0) this.grab.pickables.splice(i, 1);
@@ -153,6 +261,10 @@ export class Game {
     this.lights.follow(this.rig.x);
     this.loop.tick(realDt);
     this.physics.sync();
+    const gdt = this.sim.gameTime - this.lastGameTime;
+    this.lastGameTime = this.sim.gameTime;
+    for (const v of this.foodViews.values()) v.update(gdt);
+    this.juice.update(dt);
     this.renderer.render(this.scene, this.camera);
     const held = this.grab.heldHandle !== null ? this.items.get(this.grab.heldHandle) : undefined;
     this.overlay.update(realDt, {

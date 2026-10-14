@@ -3,6 +3,12 @@ import { donenessOf, type Doneness } from './doneness';
 import { FoodThermal, type FaceEnv, type FoodThermalOptions, airEnv } from './foodThermal';
 import { cToF, fToC, FRIDGE_C } from './units';
 
+/** Plane n·p = d (local coords); the inside of a piece is n·p ≤ d. */
+export interface Plane {
+  n: [number, number, number];
+  d: number;
+}
+
 export type SafetyState = 'unsafe' | 'safe' | 'n/a';
 
 export interface FoodSummary {
@@ -29,12 +35,20 @@ export class FoodItem {
   readonly thermal: FoodThermal;
   /** Time spent resting off heat since last cooked, s. */
   restTime = 0;
+  /** This piece's center in the frame of the original whole food (pieces after cutting), m. */
+  readonly origin: [number, number, number];
+  /** Cut planes bounding this piece, in its local frame (n·p ≤ d is inside). */
+  readonly cuts: Plane[];
+  readonly size: [number, number, number];
 
   constructor(
     readonly id: string,
     size: [number, number, number],
-    opts: FoodThermalOptions & { props?: FoodProps } = {},
+    opts: FoodThermalOptions & { props?: FoodProps; origin?: [number, number, number]; cuts?: Plane[] } = {},
   ) {
+    this.size = size;
+    this.origin = opts.origin ?? [0, 0, 0];
+    this.cuts = opts.cuts ?? [];
     const props = opts.props ?? FOODS[id];
     if (!props) throw new Error(`no food props for ${id}`);
     this.props = props;

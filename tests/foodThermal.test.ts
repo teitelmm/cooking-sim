@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { FoodItem } from '../src/sim/food';
-import { airEnv, Dir, H, ovenEnv, type FaceEnv } from '../src/sim/foodThermal';
+import { Dir, H, ovenEnv } from '../src/sim/foodThermal';
+import { onPan } from '../src/sim/recipes';
 import { cToF, fToC } from '../src/sim/units';
 
-/** 1.5" ribeye: 20 × 3.81 × 13 cm. */
-const STEAK: [number, number, number] = [0.2, 0.0381, 0.13];
+/** 1.5" ribeye: 14 × 3.81 × 9.5 cm (≈ 1.1 lb). */
+const STEAK: [number, number, number] = [0.14, 0.0381, 0.095];
 
-function pan(panF: number, contactH: number = H.panContact): FaceEnv {
-  return { medium: 'air', fluidT: 60, fluidH: 10, contactT: fToC(panF), contactH, contactFrac: 0.9, radT: 22, radView: 0 };
-}
 
-/** Put `down` face on a pan at panF; the other faces see warm air above the pan. */
-function onPan(f: FoodItem, panF: number, down: Dir) {
-  for (let d = 0; d < 6; d++) f.setEnv(d, airEnv(35, 10));
-  f.setEnv(down, pan(panF));
-}
 
 function run(f: FoodItem, seconds: number) {
   for (let t = 0; t < seconds; t++) f.step(1);

@@ -114,3 +114,37 @@ scenarios.spawner = async ({ page, shot, game, wait, assert }) => {
   const n1 = await game(() => window.__game.items.size);
   assert(n1 === n0 + 1, `dragging the fridge steak spawned one item (${n0} → ${n1})`);
 };
+
+scenarios.lineup = async ({ page, shot, game, wait, assert }) => {
+  // Clear the prep counter's start items out of the way.
+  await game(() => {
+    const g = window.__game;
+    for (const [h, it] of [...g.items]) if (['steak', 'potato', 'chef-knife', 'cutting-board'].includes(it.def.id)) g.despawn(h);
+  });
+  const res = await game(() => window.__debug.steakLineup());
+  console.log('     ' + res.map((r) => `${r.label}: ${r.doneness} (peak ${r.peakCoreF.toFixed(0)}°F, char ${r.charBottom.toFixed(2)}, juice ${r.juiceMl.toFixed(1)} ml)`).join('\n     '));
+  await game(() => window.__game.rig.focusOn({ x: 1.95, y: 1.36 }));
+  await page.waitForFunction(() => !window.__game.rig.moving, null, { timeout: 30_000 });
+  await game(() => window.__game.rig.dolly(-0.3));
+  // Let the juice finish seeping (SwiftShader renders ~1 fps, so step the juice system directly).
+  await game(() => {
+    for (let i = 0; i < 80; i++) window.__game.juice.update(1 / 30);
+  });
+  await wait(2500);
+  await shot('steak-lineup');
+  const pooled = await game(() => window.__game.juice.pools.map((p) => +(p.volume * 1e6).toFixed(2)));
+  console.log('     juice pools (ml): ' + pooled.join(', '));
+  const order = ['raw', 'rare', 'medium-rare', 'medium', 'medium-well', 'well-done'];
+  assert(order.indexOf(res[0].doneness) <= 2, `rare steak is rare-ish (${res[0].doneness})`);
+  assert(['medium', 'medium-rare', 'medium-well'].includes(res[1].doneness), `medium steak (${res[1].doneness})`);
+  assert(res[2].doneness === 'well-done', `well-done steak (${res[2].doneness})`);
+  assert(res[3].charBottom > 0.3, 'flipped-too-late steak is charred on the bottom');
+};
+
+/** Ad-hoc debugging: PROBE='return window.__game.items.size' npm run shots -- probe */
+scenarios.probe = async ({ game }) => {
+  const body = process.env.PROBE;
+  if (!body) return;
+  const out = await game((src) => new Function(src)(), body);
+  console.log('     probe: ' + JSON.stringify(out));
+};

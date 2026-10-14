@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
 import { RAPIER } from '../engine/physics';
 
 type Vec3 = [number, number, number];
@@ -11,6 +12,8 @@ export type ShapePart = (
   | { kind: 'capsule'; radius: number; length: number }
   /** Open tube wall (pan/pot sides). Collider = ring of boxes; mesh = lathe. */
   | { kind: 'ring'; radius: number; height: number; thickness: number; segments?: number }
+  /** Convex hull of points (cut food pieces). */
+  | { kind: 'hull'; points: [number, number, number][] }
 ) & {
   offset?: Vec3;
   /** Euler XYZ radians. */
@@ -35,7 +38,30 @@ export function partVolume(p: ShapePart): number {
       return Math.PI * p.radius ** 2 * p.length + (4 / 3) * Math.PI * p.radius ** 3;
     case 'ring':
       return 2 * Math.PI * p.radius * p.height * p.thickness;
+    case 'hull':
+      return hullVolume(p.points);
   }
+}
+
+/** Volume of the convex hull of points (tetrahedra fan from the centroid). */
+export function hullVolume(points: [number, number, number][]): number {
+  const g = new ConvexGeometry(points.map((q) => new THREE.Vector3(...q)));
+  const pos = g.attributes.position;
+  const c = new THREE.Vector3();
+  for (const q of points) c.add(new THREE.Vector3(...q));
+  c.divideScalar(points.length);
+  let v = 0;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const d = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i += 3) {
+    a.fromBufferAttribute(pos, i).sub(c);
+    b.fromBufferAttribute(pos, i + 1).sub(c);
+    d.fromBufferAttribute(pos, i + 2).sub(c);
+    v += Math.abs(a.dot(b.cross(d))) / 6;
+  }
+  g.dispose();
+  return v;
 }
 
 const q = new THREE.Quaternion();
@@ -85,6 +111,12 @@ export function buildColliders(
       case 'capsule':
         descs.push({ d: RAPIER.ColliderDesc.capsule(p.length / 2, p.radius), o, r: rotOf(p.rot) });
         break;
+      case 'hull': {
+        const pts = new Float32Array(p.points.flat());
+        const hd = RAPIER.ColliderDesc.convexHull(pts) ?? RAPIER.ColliderDesc.ball(0.005);
+        descs.push({ d: hd, o, r: rotOf(p.rot) });
+        break;
+      }
       case 'ring': {
         const n = p.segments ?? 12;
         const segLen = 2 * (p.radius + p.thickness / 2) * Math.tan(Math.PI / n) * 1.02;
@@ -127,6 +159,9 @@ export function buildPartGeometry(p: ShapePart): THREE.BufferGeometry {
       break;
     case 'capsule':
       g = new THREE.CapsuleGeometry(p.radius, p.length, 8, 16);
+      break;
+    case 'hull':
+      g = new ConvexGeometry(p.points.map((q) => new THREE.Vector3(...q)));
       break;
     case 'ring': {
       const r0 = p.radius - p.thickness / 2;
