@@ -378,20 +378,23 @@ scenarios.knife = async ({ page, shot, game, wait, assert }) => {
     const find = (id) => [...g.items].find(([, it]) => it.def.id === id);
     const [kh, knife] = find('chef-knife');
     const [ph] = find('potato');
-    for (let i = 0; i < 120; i++) g.physics.step();
-    const pp = g.bodyPos(ph);
-    // Pick the knife up (as if pressed on its handle).
-    const kp = knife.entry.body.translation();
-    const scr = g.toScreen(kp.x, kp.y, kp.z);
-    const info = g.input.info(scr.x, scr.y);
-    g.grab.start(kh, { x: kp.x, y: kp.y, z: kp.z, clone() { return this; } }, info);
-    const target = (x, y, z) => g.grab.grab.setTarget({ x, y, z });
     const run = (n) => {
       for (let i = 0; i < n; i++) g.physics.step();
+      g.physics.sync();
+      g.knife.frame();
     };
-    const zC = pp.z + 0.105;
+    run(120);
+    const pp = g.bodyPos(ph);
+    // Pick the knife up: it locks blade-down with the edge under the cursor.
+    const kp = knife.entry.body.translation();
+    const scr = g.toScreen(kp.x, kp.y, kp.z);
+    g.grab.start(kh, { x: kp.x, y: kp.y, z: kp.z, clone() { return this; } }, g.input.info(scr.x, scr.y));
+    const locked = g.grab.isLocked;
+    const target = (x, y, z) => g.grab.setTarget({ x, y, z });
+    const zC = pp.z;
     const startCuts = g.knife.cuts;
     const sizes = [];
+    let guideSeen = false;
     for (let s = 0, made = 0; made < 5 && s < 10; s++) {
       const before = g.knife.cuts;
       // Aim 6 mm in from the current +x end of the potato, a little sloppy.
@@ -400,20 +403,17 @@ scenarios.knife = async ({ page, shot, game, wait, assert }) => {
       const bp = g.bodyPos(big);
       const half = g.sim.foods.get(big).size[0] / 2;
       const x = bp.x + half - 0.0065 + (s % 2 ? 0.0015 : -0.001);
-      target(x, 1.06, zC);
-      run(90);
-      let maxP = 0;
-      for (let k = 0; k < 60; k++) {
-        target(x, 1.06 - (k / 60) * 0.13, zC);
-        run(2);
-        if (g.knife.active) maxP = Math.max(maxP, g.knife.active.progress);
-      }
+      target(x, bp.y + 0.08, zC);
       run(30);
-      const br = g.physics.entries.get(big)?.body.rotation();
+      // Chop: straight down through it (stops at the board).
+      for (let k = 0; k < 20; k++) {
+        target(x, bp.y + 0.08 - (k / 20) * 0.14, zC);
+        run(2);
+        if (g.knife.target) guideSeen = true;
+      }
       if (g.knife.cuts > before) made++;
-      window.__strokes = (window.__strokes || []).concat([{ s, x: +x.toFixed(4), half: +half.toFixed(4), maxP: +maxP.toFixed(2), rot: br && [br.x, br.y, br.z, br.w].map((v) => +v.toFixed(2)), n: pieces.length }]);
-      target(x, 1.06, zC);
-      run(60);
+      target(x, bp.y + 0.08, zC);
+      run(20);
     }
     for (const [h, it] of g.items) if (it.def.id === 'potato') sizes.push(g.sim.foods.get(h).size[0]);
     // Now a seared steak (clear the starting one off the board first).
@@ -424,19 +424,23 @@ scenarios.knife = async ({ page, shot, game, wait, assert }) => {
     window.__debug.searFood?.(sf);
     const sp = g.bodyPos(steak.entry.body.handle);
     const pooled0 = g.juice.pooledMl;
-    target(sp.x, 1.08, sp.z + 0.105);
-    run(90);
-    for (let k = 0; k < 80; k++) {
-      target(sp.x, 1.08 - (k / 80) * 0.15, sp.z + 0.105);
+    target(sp.x, sp.y + 0.08, sp.z);
+    run(30);
+    for (let k = 0; k < 20; k++) {
+      target(sp.x, sp.y + 0.08 - (k / 20) * 0.14, sp.z);
       run(2);
     }
-    run(60);
+    run(30);
     for (let i = 0; i < 60; i++) g.juice.update(1 / 30);
+    target(sp.x, sp.y + 0.1, sp.z - 0.15);
+    run(30);
     g.grab.end();
     const steakPieces = [...g.items].filter(([, it]) => it.def.id === 'steak').length;
-    return { strokes: window.__strokes, cuts: g.knife.cuts - startCuts, sizes: sizes.sort().map((x) => +(x * 1000).toFixed(1)), steakPieces, juiceMl: g.juice.pooledMl - pooled0 };
+    return { locked, guideSeen, cuts: g.knife.cuts - startCuts, sizes: sizes.sort().map((x) => +(x * 1000).toFixed(1)), steakPieces, juiceMl: g.juice.pooledMl - pooled0 };
   });
   console.log('     ' + JSON.stringify(r));
+  assert(r.locked, 'the knife locks into its pose when picked up');
+  assert(r.guideSeen, 'a cut guide shows over the food');
   const slices = r.sizes.filter((s) => s < 15);
   assert(slices.length >= 4, `knife sliced the potato (${slices.length} slices)`);
   const mean = slices.reduce((a, b) => a + b, 0) / slices.length;
@@ -444,6 +448,42 @@ scenarios.knife = async ({ page, shot, game, wait, assert }) => {
   assert(r.steakPieces === 2, 'knife cut the steak in two');
   await wait(1500);
   await shot('knife-cuts');
+};
+
+/** Real mouse: pick up the knife, hover over the potato (guide shows), drag down through it → cut. */
+scenarios.cutting_ui = async ({ page, shot, game, wait, assert }) => {
+  await game(() => {
+    const g = window.__game;
+    for (let i = 0; i < 120; i++) g.physics.step();
+    g.rig.focusOn({ x: 2.05, y: 1.36 });
+  });
+  await settle(page);
+  await wait(1000);
+  const k = await game(() => {
+    const g = window.__game;
+    const kn = [...g.items].find(([, it]) => it.def.id === 'chef-knife')[1].entry.body.translation();
+    const po = [...g.items].find(([, it]) => it.def.id === 'potato')[1].entry.body.translation();
+    // Grab the handle end (local −x is the handle; in its resting pose that's roughly −x in the world).
+    return { knife: g.toScreen(kn.x - 0.05, kn.y + 0.01, kn.z), above: g.toScreen(po.x, po.y + 0.07, po.z), below: g.toScreen(po.x, po.y - 0.06, po.z), pose0: null };
+  });
+  await page.mouse.move(k.knife.x, k.knife.y);
+  await page.mouse.down();
+  await page.mouse.move(k.above.x, k.above.y, { steps: 8 });
+  await wait(2500);
+  const hover = await game(() => ({ held: window.__game.grab.heldHandle !== null, locked: window.__game.grab.isLocked, guide: !!window.__game.knife.target }));
+  await shot('cutting-guide');
+  const cuts0 = await game(() => window.__game.knife.cuts);
+  await page.mouse.move(k.below.x, k.below.y, { steps: 6 });
+  await wait(2500);
+  const cuts1 = await game(() => window.__game.knife.cuts);
+  await page.mouse.move(k.above.x, k.above.y, { steps: 4 });
+  await wait(1500);
+  await page.mouse.up();
+  await shot('cutting-done');
+  console.log('     ' + JSON.stringify({ hover, cuts0, cuts1 }));
+  assert(hover.held && hover.locked, 'knife picked up and locked');
+  assert(hover.guide, 'cut guide shows while hovering over the potato');
+  assert(cuts1 > cuts0, 'dragging down through the potato cuts it');
 };
 
 scenarios.autocutter = async ({ page, shot, game, wait, assert }) => {
@@ -821,12 +861,13 @@ scenarios.playthrough = async ({ page, shot, game, wait, assert }) => {
     };
     /** Glide the hand's target to (x, y, z) over n steps (2 physics steps each), ticking the tools. */
     H.glide = (x, y, z, n = 60, until) => {
-      const a = g.grab.grab.target.clone();
+      const a = g.grab.target.clone();
       for (let k = 1; k <= n; k++) {
         const t = k / n;
-        g.grab.grab.setTarget({ x: a.x + (x - a.x) * t, y: a.y + (y - a.y) * t, z: a.z + (z - a.z) * t });
+        g.grab.setTarget({ x: a.x + (x - a.x) * t, y: a.y + (y - a.y) * t, z: a.z + (z - a.z) * t });
         H.run(2);
         g.tools.frame(1 / 60);
+        g.knife.frame();
         if (until && until()) return true;
       }
       return false;
@@ -835,7 +876,7 @@ scenarios.playthrough = async ({ page, shot, game, wait, assert }) => {
     H.carry = (food, x, y, z, n = 80) => {
       for (let pass = 0; pass < 3; pass++) {
         const fp = g.bodyPos(food);
-        const tg = g.grab.grab.target;
+        const tg = g.grab.target;
         H.glide(tg.x + x - fp.x, tg.y + y - fp.y, tg.z + z - fp.z, pass ? 20 : n);
         H.run(30);
       }
@@ -851,18 +892,14 @@ scenarios.playthrough = async ({ page, shot, game, wait, assert }) => {
     H.tongsOnto = (food) => {
       const fp = g.bodyPos(food);
       for (const old of H.find('tongs')) g.despawn(old);
-      // Tongs in hand, held up and to the side of the food.
+      // Tongs in hand (locked tool: the tips follow the hand), above the food.
       const t = g.spawn('tongs', { x: fp.x - 0.2, y: fp.y + 0.25, z: fp.z }).entry.body.handle;
       H.run(1);
-      H.pick(t, [-0.09, 0, 0]);
-      H.glide(fp.x - 0.29, fp.y + 0.25, fp.z, 30);
-      // Held tip-down at ~0.4 rad: the tips sit (0.19, −0.08) m from the handle.
+      H.pick(t);
       const top = fp.y + g.sim.foods.get(food).size[1] / 2;
-      const ax = fp.x - 0.02 - 0.193;
-      H.glide(ax, top + 0.082 + 0.08, fp.z, 50);
-      H.run(60);
-      const got = H.glide(ax, top + 0.082 - 0.02, fp.z, 60, () => g.tools.grip?.food === food);
-      return got;
+      H.glide(fp.x, top + 0.08, fp.z, 30);
+      // Lower the tips onto it until they clamp.
+      return H.glide(fp.x, top - 0.02, fp.z, 40, () => g.tools.grip?.food === food);
     };
     window.__H = H;
   });
@@ -877,13 +914,13 @@ scenarios.playthrough = async ({ page, shot, game, wait, assert }) => {
     H.pick(b, [0, 0.08, 0]);
     H.glide(pan.x + 0.35, 1.25, pan.z, 40);
     H.glide(pan.x + 0.12, 1.25, pan.z, 40);
-    g.grab.grab.rotate({ x: 0, y: 0, z: 1 }, 2.2); // spout swings over toward the pan (−x)
+    g.grab.rotateHeld({ x: 0, y: 0, z: 1 }, 2.2); // spout swings over toward the pan (−x)
     const c = g.liquids.contentsOf(H.pan());
     for (let i = 0; i < 400 && c.oil < 0.012; i++) {
       H.run(2);
       g.liquids.frame(1 / 60, []);
     }
-    g.grab.grab.rotate({ x: 0, y: 0, z: 1 }, -2.2);
+    g.grab.rotateHeld({ x: 0, y: 0, z: 1 }, -2.2);
     for (let i = 0; i < 90; i++) {
       H.run(2);
       g.liquids.frame(1 / 60, []);
@@ -892,10 +929,13 @@ scenarios.playthrough = async ({ page, shot, game, wait, assert }) => {
     H.glide(pan.x + 0.45, 1.2, pan.z - 0.1, 50);
     H.glide(pan.x + 0.45, 1.0, pan.z - 0.1, 40);
     H.drop();
-    return { oilG: c.oil * 1000, bottle: g.bodyPos(b) };
+    // Nothing should have puddled by the bottle or on the counter: it all went in the pan.
+    const strays = g.juice.pools.filter((pl) => pl.volume > 1e-7 && Math.hypot(pl.center.x - pan.x, pl.center.z - pan.z) > 0.13).map((pl) => +(pl.volume * 1e6).toFixed(2));
+    return { oilG: c.oil * 1000, bottle: g.bodyPos(b), strays };
   });
   console.log('     oiled: ' + JSON.stringify(oiled));
   assert(oiled.oilG > 5, `oil poured into the skillet (${oiled.oilG.toFixed(1)} g)`);
+  assert(oiled.strays.length === 0, `no oil splashed outside the pan (${JSON.stringify(oiled.strays)} ml)`);
 
   // Steak from the board into the skillet (it's cold — bare hands are fine).
   const placed = await game(() => {
@@ -946,7 +986,7 @@ scenarios.playthrough = async ({ page, shot, game, wait, assert }) => {
     const fp = g.bodyPos(s);
     const pan0 = g.bodyPos(H.pan());
     H.carry(s, pan0.x, fp.y + 0.14, pan0.z, 50);
-    g.grab.grab.rotate({ x: 1, y: 0, z: 0 }, Math.PI);
+    g.grab.rotateHeld({ x: 1, y: 0, z: 0 }, Math.PI);
     H.run(160);
     H.carry(s, pan0.x, fp.y + 0.14, pan0.z, 30);
     H.carry(s, pan0.x, fp.y + 0.075, pan0.z, 40);
@@ -1019,13 +1059,13 @@ scenarios.playthrough = async ({ page, shot, game, wait, assert }) => {
     H.pick(k);
     const sp = g.bodyPos(s);
     const pooled0 = g.juice.pooledMl;
-    g.grab.grab.setTarget({ x: sp.x, y: 1.08, z: sp.z + 0.105 });
-    H.run(90);
-    H.glide(sp.x, 1.08 - 0.15, sp.z + 0.105, 80);
-    H.run(60);
+    // Locked knife: the edge follows the hand. Hover over the steak, then chop straight down.
+    H.glide(sp.x, sp.y + 0.08, sp.z, 30);
+    H.glide(sp.x, sp.y - 0.06, sp.z, 30);
+    H.run(30);
     for (let i = 0; i < 60; i++) g.juice.update(1 / 30);
     // Lift the knife clear and set it down behind the board.
-    H.glide(sp.x, 1.12, sp.z + 0.105, 40);
+    H.glide(sp.x, 1.12, sp.z, 40);
     H.glide(sp.x + 0.15, 1.12, -0.15, 60);
     H.glide(sp.x + 0.15, 0.99, -0.15, 40);
     g.grab.end();
@@ -1191,4 +1231,49 @@ scenarios.tilt = async ({ page, game, wait, assert }) => {
   assert(t1 - t0 > 0.3, 'A tilts the held item counterclockwise on screen');
   assert(t1 - t2 > 0.3, 'D tilts it back clockwise');
   assert(b1 - b0 > 0.15, 'the steak itself follows the hand');
+};
+
+/** Pour oil with the bottle tipped nearly upside down over a pan: it must land in the pan, not at the spout. */
+scenarios.oil_pour = async ({ game, assert }) => {
+  const r = await game(() => {
+    const g = window.__game;
+    const run = (n) => {
+      for (let i = 0; i < n; i++) {
+        g.physics.step();
+        if (i % 2 === 0) g.liquids.frame(1 / 60, []);
+      }
+      g.physics.sync();
+    };
+    run(60);
+    const [ph] = [...g.heat.cookware].find(([, c]) => c.id === 'cast-iron-pan');
+    const pan = g.bodyPos(ph);
+    const c = g.liquids.contentsOf(ph);
+    const oil0 = c.oil;
+    const b = g.spawn('oil-bottle', { x: pan.x + 0.3, y: 0.95, z: pan.z }).entry.body.handle;
+    run(60);
+    const bp = g.bodyPos(b);
+    const s = g.toScreen(bp.x, bp.y + 0.1, bp.z);
+    g.grab.start(b, { x: bp.x, y: bp.y + 0.1, z: bp.z, clone() { return this; } }, g.input.info(s.x, s.y));
+    const glide = (x, y, z, n) => {
+      const a = g.grab.target.clone();
+      for (let k = 1; k <= n; k++) {
+        g.grab.setTarget({ x: a.x + ((x - a.x) * k) / n, y: a.y + ((y - a.y) * k) / n, z: a.z + ((z - a.z) * k) / n });
+        run(2);
+      }
+    };
+    glide(pan.x + 0.3, 1.3, pan.z, 30);
+    // Tipped, the spout swings ~15 cm toward −x: hold the bottle that far to the right of the pan's center.
+    glide(pan.x + 0.16, 1.3, pan.z, 40);
+    g.grab.rotateHeld({ x: 0, y: 0, z: 1 }, 2.95); // nearly upside down
+    run(500);
+    g.grab.rotateHeld({ x: 0, y: 0, z: 1 }, -2.95);
+    run(200);
+    g.grab.end();
+    run(60);
+    const strays = g.juice.pools.filter((pl) => pl.volume > 1e-7 && Math.hypot(pl.center.x - pan.x, pl.center.z - pan.z) > 0.13).map((pl) => ({ ml: +(pl.volume * 1e6).toFixed(2), x: +pl.center.x.toFixed(2), y: +pl.center.y.toFixed(2), z: +pl.center.z.toFixed(2) }));
+    return { pouredG: (c.oil - oil0) * 1000, strays };
+  });
+  console.log('     ' + JSON.stringify(r));
+  assert(r.pouredG > 10, `oil landed in the pan (${r.pouredG.toFixed(1)} g)`);
+  assert(r.strays.length === 0, `no oil puddled at the spout or elsewhere (${JSON.stringify(r.strays)})`);
 };

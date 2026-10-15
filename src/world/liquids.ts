@@ -298,7 +298,8 @@ export class LiquidSystem {
         }
       }
       if (!landed && d.p.y < 1.4) {
-        const floor = this.floorBelow(d.p);
+        // Not the container it was poured from (or what's in your hand): it falls past the lip.
+        const floor = this.floorAt(d.p.x, d.p.y, d.p.z, [d.from, this.heldHandle()]);
         if (d.p.y <= floor + 0.002) {
           landed = true;
           if (!inZone(this.sink, d.p, 0.02)) this.onSplash?.(new THREE.Vector3(d.p.x, floor, d.p.z), d.kg, d.kind);
@@ -322,10 +323,9 @@ export class LiquidSystem {
   }
 
   /** Surface height below a point (cached coarse lookup via physics ray). */
-  floorAt: (x: number, y: number, z: number) => number = () => 0;
-  private floorBelow(p: THREE.Vector3): number {
-    return this.floorAt(p.x, p.y, p.z);
-  }
+  floorAt: (x: number, y: number, z: number, exclude?: number[]) => number = () => 0;
+  /** Body in the player's hand (set by the game). */
+  heldHandle: () => number = () => -1;
 
   /** Public puff emitter (fryer bubbles etc.). */
   puffAt(at: THREE.Vector3, spread: number, color: number, life: number): void {

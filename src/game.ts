@@ -33,6 +33,7 @@ import { PantryActions } from './world/pantryActions';
 import { BakingSystem } from './world/baking';
 import { partVolume } from './world/shapes';
 import { Hud } from './ui/hud';
+import { lockSpec } from './world/lockedTools';
 import { HandTools } from './world/tools';
 import { Feedback } from './world/feedback';
 import { inZone, zone } from './world/kitchenAppliances';
@@ -110,6 +111,9 @@ export class Game {
     this.input = new PointerRouter(this.renderer.domElement, this.camera, this.rig);
     this.grab = new GrabInteraction(this.physics, this.events, { minZ: KITCHEN.holdDepth[0], maxZ: KITCHEN.holdDepth[1], minY: 0.02 });
     this.grab.viewAxis = () => this.camera.getWorldDirection(new THREE.Vector3()).negate();
+    this.grab.lockSpecFor = (h) => lockSpec(this.items.get(h)?.def.id);
+    this.grab.floorAt = (x, y, z, exclude) => this.floorAt(x, y, z, exclude);
+    this.grab.depthHint = (ray, held) => this.depthUnder(ray, held);
     this.appliances = new KitchenAppliances(this.physics, this.scene);
     this.input.addPicker(this.appliances.controls.picker);
     this.input.addPicker(this.grab.picker);
@@ -143,7 +147,8 @@ export class Game {
     faucetHit.position.set(7.0, KITCHEN.counterTop + 0.17, -0.2);
     this.scene.add(faucetHit);
     this.liquids = new LiquidSystem(this.scene, this.physics, this.water, this.appliances.controls, faucetHit);
-    this.liquids.floorAt = (x, y, z) => this.floorAt(x, y, z);
+    this.liquids.floorAt = (x, y, z, ex) => this.floorAt(x, y, z, ex);
+    this.liquids.heldHandle = () => this.grab.heldHandle ?? -1;
     this.probes = new ProbeSystem(this);
     this.knife = new KnifeSystem(this);
     this.autoCutter = new AutoCutter(this);
@@ -286,11 +291,30 @@ export class Game {
     return out;
   }
 
-  /** Height of the first surface below (x, y, z), ignoring food items. */
-  floorAt(x: number, y: number, z: number): number {
+  /** z of the food (else the pan/pot/bowl) under a screen ray, ignoring the held item. */
+  depthUnder(ray: THREE.Ray, held: number): number | null {
+    const rc = new THREE.Raycaster();
+    rc.ray.copy(ray);
+    let container: number | null = null;
+    for (const hit of rc.intersectObjects(this.grab.pickables, true)) {
+      let o: THREE.Object3D | null = hit.object;
+      while (o && o.userData.bodyHandle === undefined) o = o.parent;
+      const h = o?.userData.bodyHandle as number | undefined;
+      if (h === undefined || h === held) continue;
+      const e = this.physics.entries.get(h);
+      if (!e) continue;
+      if (e.data.food) return e.body.translation().z;
+      if (container === null && e.data.cookware) container = e.body.translation().z;
+    }
+    return container;
+  }
+
+  /** Height of the first surface below (x, y, z), ignoring food, sensors (held tools) and `exclude`. */
+  floorAt(x: number, y: number, z: number, exclude: number[] = []): number {
     const hit = this.physics.world.castRay(new RAPIER.Ray({ x, y: y + 0.02, z }, { x: 0, y: -1, z: 0 }), 3, true, undefined, undefined, undefined, undefined, (c) => {
+      if (c.isSensor()) return false;
       const e = this.physics.bodyOfCollider(c.handle);
-      return !(e && e.data.food);
+      return !(e && (e.data.food || exclude.includes(e.body.handle)));
     });
     return hit ? y + 0.02 - hit.timeOfImpact : 0;
   }
@@ -408,6 +432,7 @@ export class Game {
     this.pantry.frame(dt);
     this.baking.frame(dt);
     this.tools.frame(dt);
+    this.knife.frame();
     this.feedback.frame(dt, gdt);
     this.hud.frame();
     const tr = performance.now();

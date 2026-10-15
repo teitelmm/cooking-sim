@@ -2,168 +2,153 @@ import * as THREE from 'three';
 import type { Game } from '../game';
 import type { FoodItem, Plane } from '../sim/food';
 import { insideFood } from '../sim/split';
-import { assistCutPlane, cutResistance } from '../sim/cutting';
+import { assistCutPlane } from '../sim/cutting';
 
-/** Blade edge sample points in the knife's local frame (edge is local +z after the blade-down pose). */
-const EDGE = Array.from({ length: 18 }, (_, i) => new THREE.Vector3(0.02 + i * 0.01, 0, 0.0225));
-/** Held pose: blade vertical, edge down, tip pointing away from you. */
-const POSE = new THREE.Quaternion()
-  .setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2)
-  .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2));
+/** Blade edge sample points in the knife's local frame (the edge is local +z; the blade runs along +x). */
+const EDGE = Array.from({ length: 19 }, (_, i) => new THREE.Vector3(0.01 + i * 0.01, 0, 0.0225));
 
-interface ActiveCut {
+interface Target {
   food: number;
-  /** Cut plane in the food item's body frame. */
+  /** Snapped cut plane in the food item's body frame. */
   plane: Plane;
-  progress: number;
-  height: number;
-  resistance: number;
+  /** World-space food center height and top. */
+  centerY: number;
+  topY: number;
 }
 
 /**
- * The chef's knife. Picking it up turns it blade-down. Touch the edge to food and push down (or saw along
- * the blade) to cut: progress depends on how far the edge travels relative to the food's height and how
- * tough it is. The other hand holds the food still while you cut, the blade drags a little in tough meat,
- * and vegetables get a magnetic assist so slices come out even. When the cut finishes the food splits.
+ * The chef's knife, made easy. Picking it up locks it blade-down (see lockedTools). Hover it over food and
+ * a guide shows exactly where it will cut — squared up to the food, and for vegetables snapped to an even
+ * slice grid. Move down through the food and it's cut, instantly: no sawing, no resistance. Lift it out
+ * and it's ready for the next slice.
  */
 export class KnifeSystem {
   knife: number | null = null;
-  active: ActiveCut | null = null;
-  private cooldown = 0;
   cuts = 0;
+  /** What the blade is over right now (null if nothing). */
+  target: Target | null = null;
+  /** Must lift the edge out of the food before the next chop. */
+  private armed = true;
+  private readonly guide: THREE.Mesh;
 
   constructor(private readonly game: Game) {
-    game.grab.onGrab.push((h, grab) => {
-      if (game.items.get(h)?.def.id !== 'chef-knife') return;
-      this.knife = h;
-      grab.setHoldRotation(POSE);
+    game.grab.onGrab.push((h) => {
+      if (game.items.get(h)?.def.id === 'chef-knife') {
+        this.knife = h;
+        this.armed = true;
+      }
     });
     game.events.on('release', (e) => {
       if (e.body === this.knife) {
-        this.setSensor(false);
         this.knife = null;
-        this.active = null;
+        this.target = null;
       }
     });
-    game.physics.preStep.push((dt) => this.step(dt));
+    // A thin slab on the cut plane, drawn over the food so the cut line always shows.
+    this.guide = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshBasicMaterial({ color: 0xfff1b0, transparent: true, opacity: 0.6, depthTest: false, depthWrite: false, toneMapped: false }),
+    );
+    this.guide.renderOrder = 4;
+    this.guide.visible = false;
+    game.scene.add(this.guide);
   }
 
-  private setSensor(on: boolean): void {
-    const e = this.knife !== null ? this.game.physics.entries.get(this.knife) : undefined;
-    if (!e) return;
-    // Collider 0 is the blade; the handle stays solid.
-    e.body.collider(0).setSensor(on);
-  }
-
-  private edgeWorld(q: THREE.Quaternion, t: THREE.Vector3): THREE.Vector3[] {
-    return EDGE.map((p) => p.clone().applyQuaternion(q).add(t));
-  }
-
-  private foodLocal(h: number, w: THREE.Vector3): [number, number, number] | null {
+  private foodFrame(h: number) {
     const e = this.game.physics.entries.get(h);
     if (!e) return null;
     const r = e.body.rotation();
     const t = e.body.translation();
-    const c = (e.data.foodCenter as number[]) ?? [0, 0, 0];
-    const l = w.clone().sub(new THREE.Vector3(t.x, t.y, t.z)).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w).invert());
-    return [l.x - c[0], l.y - c[1], l.z - c[2]];
+    const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+    const c = (e.data.foodCenter as [number, number, number]) ?? [0, 0, 0];
+    return { q, inv: q.clone().invert(), t: new THREE.Vector3(t.x, t.y, t.z), c };
   }
 
-  step(dt: number): void {
+  /** World point → food grid frame. */
+  private toFood(f: NonNullable<ReturnType<KnifeSystem['foodFrame']>>, w: THREE.Vector3): THREE.Vector3 {
+    return w.clone().sub(f.t).applyQuaternion(f.inv).sub(new THREE.Vector3(...f.c));
+  }
+
+  /** Call every frame. */
+  frame(): void {
     const g = this.game;
-    this.cooldown = Math.max(0, this.cooldown - dt);
-    if (this.knife === null) return;
-    const ke = g.physics.entries.get(this.knife);
-    if (!ke) {
-      this.knife = null;
+    this.target = null;
+    if (this.knife === null || g.grab.heldHandle !== this.knife) {
+      this.guide.visible = false;
       return;
     }
+    const ke = g.physics.entries.get(this.knife);
+    if (!ke) return;
     const kr = ke.body.rotation();
     const kt = ke.body.translation();
     const kq = new THREE.Quaternion(kr.x, kr.y, kr.z, kr.w);
-    const pos = new THREE.Vector3(kt.x, kt.y, kt.z);
-    const edge = this.edgeWorld(kq, pos);
+    const kp = new THREE.Vector3(kt.x, kt.y, kt.z);
+    const edge = EDGE.map((p) => p.clone().applyQuaternion(kq).add(kp));
     const normalW = new THREE.Vector3(0, 1, 0).applyQuaternion(kq);
-    const bladeDir = new THREE.Vector3(1, 0, 0).applyQuaternion(kq);
-    const v = ke.body.linvel();
-    const vel = new THREE.Vector3(v.x, v.y, v.z);
+    const edgeY = Math.min(...edge.map((p) => p.y));
 
-    if (this.active) {
-      const a = this.active;
-      const fe = g.physics.entries.get(a.food);
-      if (!fe) {
-        this.finish(false);
-        return;
-      }
-      // The other hand holds the food down.
-      fe.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      fe.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-      // Pressing down and sawing along the blade both advance the cut.
-      const push = Math.max(0, -vel.y) + Math.abs(vel.dot(bladeDir)) * 0.35;
-      a.progress += (push * dt) / (a.height * a.resistance);
-      // Tough meat drags on the blade.
-      const drag = 6 * a.resistance * ke.body.mass();
-      ke.body.addForce({ x: -v.x * drag, y: -v.y * drag, z: -v.z * drag }, true);
-      // Is any of the edge still in the food? Exiting below the food's middle = cut through; above = pulled out.
-      const food = g.sim.foods.get(a.food)!;
-      const anyInside = edge.some((p) => {
-        const l = this.foodLocal(a.food, p.clone().add(new THREE.Vector3(0, -0.006, 0)));
-        return l && insideFood(food, l);
-      });
-      if (a.progress >= 1) return this.finish(true);
-      if (!anyInside) {
-        const fp = fe.body.translation();
-        const edgeY = Math.min(...edge.map((p) => p.y));
-        return this.finish(edgeY < fp.y && a.progress > 0.2);
-      }
-      return;
-    }
-
-    if (this.cooldown > 0 || Math.abs(normalW.y) > 0.4) return; // blade must be roughly vertical
-    // Edge touching (or within a few mm of) food?
+    // Which food is under the blade? The edge, dropped to the food's middle height, must pass through it.
+    let best: { h: number; food: FoodItem; f: NonNullable<ReturnType<KnifeSystem['foodFrame']>>; at: THREE.Vector3; centerY: number; topY: number } | null = null;
     for (const [h, food] of g.sim.foods) {
-      if (h === this.knife) continue;
-      const hits = edge.filter((p) => {
-        const l = this.foodLocal(h, p.clone().add(new THREE.Vector3(0, -0.006, 0)));
-        return l && insideFood(food, l);
+      const f = this.foodFrame(h);
+      if (!f) continue;
+      const cw = new THREE.Vector3(...f.c).applyQuaternion(f.q).add(f.t);
+      const m = new THREE.Matrix4().makeRotationFromQuaternion(f.q).elements;
+      const halfY = (Math.abs(m[1]) * food.size[0] + Math.abs(m[5]) * food.size[1] + Math.abs(m[9]) * food.size[2]) / 2;
+      const topY = cw.y + halfY;
+      if (edgeY > topY + 0.12) continue; // too high above it to be aiming at it
+      const at = edge.find((p) => {
+        const l = this.toFood(f, new THREE.Vector3(p.x, cw.y, p.z));
+        return insideFood(food, [l.x, l.y, l.z]);
       });
-      if (!hits.length) continue;
-      this.start(h, food, hits[0], normalW);
+      if (!at) continue;
+      if (!best || topY > best.topY) best = { h, food, f, at: new THREE.Vector3(at.x, cw.y, at.z), centerY: cw.y, topY };
+    }
+    if (!best) {
+      this.armed = true;
+      this.guide.visible = false;
       return;
     }
-  }
-
-  private start(h: number, food: FoodItem, at: THREE.Vector3, normalW: THREE.Vector3): void {
-    const g = this.game;
-    const e = g.physics.entries.get(h)!;
-    const r = e.body.rotation();
-    const fq = new THREE.Quaternion(r.x, r.y, r.z, r.w);
-    const inv = fq.clone().invert();
-    const t = e.body.translation();
-    const c = (e.data.foodCenter as [number, number, number]) ?? [0, 0, 0];
-    const nL = normalW.clone().applyQuaternion(inv);
-    const pL = at.clone().sub(new THREE.Vector3(t.x, t.y, t.z)).applyQuaternion(inv);
-    // Plane in the food grid frame → assist → back to the body frame.
-    const dGrid = nL.dot(pL) - (nL.x * c[0] + nL.y * c[1] + nL.z * c[2]);
-    const assisted = assistCutPlane(food, { n: [nL.x, nL.y, nL.z], d: dGrid });
-    if (!assisted) return;
+    // Snapped plane (food grid frame) → body frame for cutFood.
+    const nL = normalW.clone().applyQuaternion(best.f.inv);
+    const pL = this.toFood(best.f, best.at);
+    const assisted = assistCutPlane(best.food, { n: [nL.x, nL.y, nL.z], d: nL.dot(pL) });
+    if (!assisted) {
+      this.guide.visible = false;
+      return;
+    }
+    const c = best.f.c;
     const n = assisted.n;
     const plane: Plane = { n, d: assisted.d + n[0] * c[0] + n[1] * c[1] + n[2] * c[2] };
-    // Height of the food along world-up.
-    const m = new THREE.Matrix4().makeRotationFromQuaternion(fq).elements;
-    const height = Math.abs(m[1]) * food.size[0] + Math.abs(m[5]) * food.size[1] + Math.abs(m[9]) * food.size[2];
-    this.active = { food: h, plane, progress: 0, height: Math.max(height, 0.01), resistance: cutResistance(food) };
-    this.setSensor(true);
+    this.target = { food: best.h, plane, centerY: best.centerY, topY: best.topY };
+    this.showGuide(best.food, best.f, assisted);
+
+    // Lifted clear of the top: ready for another chop.
+    if (edgeY > best.topY + 0.004) this.armed = true;
+    // Down through the middle: cut.
+    if (this.armed && edgeY < best.centerY) {
+      this.armed = false;
+      const pieces = g.cutFood(best.h, plane, 0.003);
+      if (pieces.length) this.cuts++;
+      this.guide.visible = false;
+    }
   }
 
-  private finish(cut: boolean): void {
-    const a = this.active;
-    this.active = null;
-    this.setSensor(false);
-    this.cooldown = 0.25;
-    if (cut && a) {
-      const pieces = this.game.cutFood(a.food, a.plane, 0.003);
-      if (pieces.length) this.cuts++;
-    }
+  /** A thin glowing slab on the cut plane, covering the food's cross-section. */
+  private showGuide(food: FoodItem, f: NonNullable<ReturnType<KnifeSystem['foodFrame']>>, p: Plane): void {
+    const n = new THREE.Vector3(...p.n).normalize();
+    // Plane point nearest the food center, and the food's extent across the plane.
+    const center = n.clone().multiplyScalar(p.d);
+    const u = Math.abs(n.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    const a = u.clone().sub(n.clone().multiplyScalar(u.dot(n))).normalize();
+    const b = n.clone().cross(a);
+    const ext = (v: THREE.Vector3) => Math.abs(v.x) * food.size[0] + Math.abs(v.y) * food.size[1] + Math.abs(v.z) * food.size[2];
+    const local = new THREE.Matrix4().makeBasis(b, a, n);
+    const q = new THREE.Quaternion().setFromRotationMatrix(local);
+    const world = center.add(new THREE.Vector3(...f.c)).applyQuaternion(f.q).add(f.t);
+    this.guide.position.copy(world);
+    this.guide.quaternion.copy(f.q).multiply(q);
+    this.guide.scale.set(ext(b) * 1.04, ext(a) * 1.04, 0.0025);
+    this.guide.visible = true;
   }
 }

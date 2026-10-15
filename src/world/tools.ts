@@ -13,9 +13,6 @@ const TIPS: Record<string, { p: [number, number, number]; r: number }> = {
   spatula: { p: [0.06, 0.014, 0], r: 0.024 },
 };
 
-/** Natural hold angle, tip down (rad): tongs reach over a pan rim; a spatula stays nearly flat to slide under. */
-const HOLD_TILT: Record<string, number> = { tongs: 0.4, spatula: 0.1 };
-
 /** How much of the pan body's heat reaches what you grab: cast iron's handle is the pan; stainless stays cooler. */
 const HANDLE_FRACTION: Record<string, number> = {
   'cast-iron-pan': 0.95,
@@ -42,8 +39,6 @@ interface Grip {
   tool: number;
   food: number;
   joint: RAPIER_T.ImpulseJoint;
-  /** Where the hand held the tool before it clamped food (local). */
-  handAnchor: THREE.Vector3;
 }
 
 /**
@@ -72,16 +67,22 @@ export class HandTools {
       const b = game.physics.entries.get(e.body)!.body;
       for (let i = 0; i < b.numColliders(); i++) b.collider(i).setCollisionGroups(TOOL_GROUPS);
     });
-    game.grab.onGrab.push((h, grab) => {
-      const tilt = HOLD_TILT[game.items.get(h)?.def.id ?? ''];
-      if (tilt === undefined) return;
-      // Keep the heading, level it, then tip the business end down.
-      const r = game.physics.entries.get(h)!.body.rotation();
-      const dir = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w));
-      const yaw = Math.atan2(-dir.z, dir.x);
-      const flat = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-      const q = new THREE.Quaternion().setFromAxisAngle(flat.clone().cross(new THREE.Vector3(0, 1, 0)), -tilt).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw));
-      grab.setHoldRotation(q);
+    // Food held in the tongs stays above whatever is under it (no pushing it through the pan floor).
+    game.grab.clampHooks.push((h) => {
+      const gr = this.grip;
+      if (!gr || gr.tool !== h) return -Infinity;
+      const fe = game.physics.entries.get(gr.food);
+      const food = game.sim.foods.get(gr.food);
+      const hot = game.grab.hotspot;
+      if (!fe || !food || !hot) return -Infinity;
+      const r = fe.body.rotation();
+      const t = fe.body.translation();
+      const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+      const c = new THREE.Vector3(...((fe.data.foodCenter as [number, number, number]) ?? [0, 0, 0])).applyQuaternion(q).add(new THREE.Vector3(t.x, t.y, t.z));
+      const m = new THREE.Matrix4().makeRotationFromQuaternion(q).elements;
+      const halfY = (Math.abs(m[1]) * food.size[0] + Math.abs(m[5]) * food.size[1] + Math.abs(m[9]) * food.size[2]) / 2;
+      const below = game.floorAt(c.x, c.y, c.z, [gr.food, gr.tool]);
+      return below + 0.002 + (hot.y - (c.y - halfY));
     });
     window.addEventListener('keydown', (e) => {
       if (e.key === ' ' && this.grip) {
@@ -144,10 +145,6 @@ export class HandTools {
     this.grip = null;
     const w = this.game.physics.world;
     if (gr.joint.isValid()) w.removeImpulseJoint(gr.joint, true);
-    const gc = this.game.grab.grab;
-    const i = gc.attached.findIndex((b) => b.handle === gr.food);
-    if (i >= 0) gc.attached.splice(i, 1);
-    if (gc.body?.handle === gr.tool) gc.moveAnchor(gr.handAnchor);
     this.justReleased = gr.food;
     this.ghosts.set(gr.food, gr.tool);
   }
@@ -238,11 +235,6 @@ export class HandTools {
     joint.setContactsEnabled(false);
     this.ghosts.delete(foodHandle);
     this.setFoodGroups(foodHandle, IGNORE_TOOLS);
-    const gc = g.grab.grab;
-    this.grip = { tool: toolHandle, food: foodHandle, joint, handAnchor: gc.localAnchor.clone() };
-    gc.attached.push(fb);
-    // Steady a load on the end of a stick the way a cook does: the hand's effort goes in at the tips.
-    const tip = TIPS[g.items.get(toolHandle)!.def.id];
-    if (tip) gc.moveAnchor({ x: tip.p[0], y: tip.p[1], z: tip.p[2] });
+    this.grip = { tool: toolHandle, food: foodHandle, joint };
   }
 }
